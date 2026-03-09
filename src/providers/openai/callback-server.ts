@@ -1,7 +1,6 @@
 import { Hono } from "hono";
 import { serve } from "@hono/node-server";
-
-const CALLBACK_PORT = 1455;
+import type { Server } from "node:http";
 
 interface CallbackResult {
   code: string;
@@ -10,62 +9,75 @@ interface CallbackResult {
 
 /**
  * Local HTTP server for OAuth callback.
- * Listens on 127.0.0.1:1455 for the redirect from the OAuth provider.
+ * Listens on 127.0.0.1 for the redirect from the OAuth provider.
  */
 export function startCallbackServer(
   expectedState: string,
+  port: number,
+  path: string,
 ): Promise<CallbackResult> {
   return new Promise((resolve, reject) => {
     const app = new Hono();
-    let server: ReturnType<typeof serve> | null = null;
+    let server: Server | null = null;
 
-    app.get("/auth/callback", (c) => {
+    const cleanup = () => {
+      if (server) {
+        server.close();
+        server = null;
+      }
+    };
+
+    app.get(path, (c) => {
       const code = c.req.query("code");
       const state = c.req.query("state");
       const error = c.req.query("error");
+      const errorDescription = c.req.query("error_description");
 
       if (error) {
-        // Close server after responding
-        setTimeout(() => server?.close(), 100);
-        reject(new Error(`OAuth error: ${error}`));
+        setTimeout(cleanup, 100);
+        reject(
+          new Error(
+            `OAuth error: ${error}${errorDescription ? ` - ${errorDescription}` : ""}`,
+          ),
+        );
         return c.html(
-          "<h1>Authentication failed</h1><p>You can close this tab.</p>",
+          "<html><body><h1>Authentication failed</h1><p>You can close this tab.</p></body></html>",
         );
       }
 
       if (!code || !state) {
-        setTimeout(() => server?.close(), 100);
+        setTimeout(cleanup, 100);
         reject(new Error("Missing code or state in callback"));
         return c.html(
-          "<h1>Authentication failed</h1><p>Missing parameters.</p>",
+          "<html><body><h1>Authentication failed</h1><p>Missing parameters.</p></body></html>",
         );
       }
 
       if (state !== expectedState) {
-        setTimeout(() => server?.close(), 100);
-        reject(new Error("State mismatch — possible CSRF"));
+        setTimeout(cleanup, 100);
+        reject(new Error("State mismatch — possible CSRF attack"));
         return c.html(
-          "<h1>Authentication failed</h1><p>Invalid state.</p>",
+          "<html><body><h1>Authentication failed</h1><p>Invalid state.</p></body></html>",
         );
       }
 
-      setTimeout(() => server?.close(), 100);
+      setTimeout(cleanup, 100);
       resolve({ code, state });
 
       return c.html(
-        "<h1>Authenticated!</h1><p>You can close this tab and return to Helios.</p>",
+        "<html><body><h1>Authenticated!</h1><p>You can close this tab and return to Helios.</p></body></html>",
       );
     });
 
     server = serve({
       fetch: app.fetch,
-      port: CALLBACK_PORT,
+      port,
       hostname: "127.0.0.1",
-    });
+    }) as unknown as Server;
 
     // Timeout after 5 minutes
     setTimeout(() => {
-      server?.close();
+      cleanup();
       reject(new Error("OAuth callback timed out after 5 minutes"));
     }, 5 * 60 * 1000);
   });

@@ -11,29 +11,36 @@ import type { SleepManager } from "../scheduler/sleep-manager.js";
 
 type Panel = "conversation" | "tasks" | "metrics";
 
+export interface Message {
+  id: number;
+  role: "user" | "assistant" | "tool" | "error" | "system";
+  content: string;
+}
+
 interface LayoutProps {
   orchestrator: Orchestrator;
   sleepManager: SleepManager;
 }
 
+let messageIdCounter = 0;
+
 export function Layout({ orchestrator, sleepManager }: LayoutProps) {
   const { exit } = useApp();
   const [activePanel, setActivePanel] = useState<Panel>("conversation");
-  const [messages, setMessages] = useState<
-    Array<{ role: string; content: string }>
-  >([]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
 
   useInput((input, key) => {
     if (key.ctrl && input === "c") {
       if (isStreaming) {
         orchestrator.interrupt();
+        setIsStreaming(false);
       } else {
         exit();
       }
     }
 
-    if (key.tab) {
+    if (key.tab && !isStreaming) {
       setActivePanel((prev) => {
         const panels: Panel[] = ["conversation", "tasks", "metrics"];
         const idx = panels.indexOf(prev);
@@ -42,72 +49,85 @@ export function Layout({ orchestrator, sleepManager }: LayoutProps) {
     }
   });
 
+  const addMessage = useCallback(
+    (role: Message["role"], content: string): number => {
+      const id = ++messageIdCounter;
+      setMessages((prev) => [...prev, { id, role, content }]);
+      return id;
+    },
+    [],
+  );
+
+  const updateMessage = useCallback((id: number, content: string) => {
+    setMessages((prev) =>
+      prev.map((m) => (m.id === id ? { ...m, content } : m)),
+    );
+  }, []);
+
   const handleSubmit = useCallback(
     async (input: string) => {
       if (!input.trim()) return;
 
-      // Handle slash commands
+      // Slash commands
       if (input.startsWith("/")) {
-        handleSlashCommand(input, orchestrator);
+        handleSlashCommand(input, orchestrator, addMessage);
         return;
       }
 
       // Wake agent if sleeping
       if (sleepManager.isSleeping) {
         sleepManager.manualWake(input);
+        addMessage("system", "Waking agent...");
         return;
       }
 
-      setMessages((prev) => [
-        ...prev,
-        { role: "user", content: input },
-      ]);
+      addMessage("user", input);
       setIsStreaming(true);
 
       try {
         let assistantText = "";
+        let assistantMsgId: number | null = null;
+
         for await (const event of orchestrator.send(input)) {
           if (event.type === "text" && event.delta) {
             assistantText += event.delta;
-            setMessages((prev) => {
-              const updated = [...prev];
-              const last = updated[updated.length - 1];
-              if (last?.role === "assistant") {
-                last.content = assistantText;
-              } else {
-                updated.push({
-                  role: "assistant",
-                  content: assistantText,
-                });
-              }
-              return updated;
-            });
+            if (assistantMsgId === null) {
+              assistantMsgId = addMessage("assistant", assistantText);
+            } else {
+              updateMessage(assistantMsgId, assistantText);
+            }
           }
 
           if (event.type === "tool_call") {
-            setMessages((prev) => [
-              ...prev,
-              {
-                role: "tool",
-                content: `> ${event.name}(${JSON.stringify(event.args).slice(0, 100)})`,
-              },
-            ]);
+            const argsPreview = JSON.stringify(event.args);
+            const truncated =
+              argsPreview.length > 80
+                ? argsPreview.slice(0, 80) + "..."
+                : argsPreview;
+            addMessage("tool", `${event.name}(${truncated})`);
+            // Reset assistant accumulator for post-tool response
+            assistantText = "";
+            assistantMsgId = null;
+          }
+
+          if (event.type === "tool_result" && event.isError) {
+            addMessage("error", event.result);
+          }
+
+          if (event.type === "error") {
+            addMessage("error", event.error.message);
           }
         }
       } catch (err) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "error",
-            content:
-              err instanceof Error ? err.message : "Unknown error",
-          },
-        ]);
+        addMessage(
+          "error",
+          err instanceof Error ? err.message : "Unknown error",
+        );
       } finally {
         setIsStreaming(false);
       }
     },
-    [orchestrator, sleepManager],
+    [orchestrator, sleepManager, addMessage, updateMessage],
   );
 
   const isSleeping = sleepManager.isSleeping;
@@ -146,7 +166,7 @@ export function Layout({ orchestrator, sleepManager }: LayoutProps) {
         </Box>
       </Box>
 
-      {/* Metrics bar (collapsed) */}
+      {/* Metrics bar */}
       <Box
         height={6}
         borderStyle="single"
@@ -165,7 +185,7 @@ export function Layout({ orchestrator, sleepManager }: LayoutProps) {
         placeholder={
           isSleeping
             ? "Type to wake agent..."
-            : "Send a message..."
+            : "Send a message... (/help for commands)"
         }
       />
     </Box>
@@ -175,18 +195,69 @@ export function Layout({ orchestrator, sleepManager }: LayoutProps) {
 function handleSlashCommand(
   input: string,
   orchestrator: Orchestrator,
+  addMessage: (role: Message["role"], content: string) => number,
 ): void {
-  const [cmd, ...args] = input.slice(1).split(" ");
+  const parts = input.slice(1).split(" ");
+  const cmd = parts[0];
+  const args = parts.slice(1);
+
   switch (cmd) {
-    case "switch":
-      orchestrator
-        .switchProvider(args[0] as "claude" | "openai")
-        .catch(() => {});
+    case "switch": {
+      const provider = args[0] as "claude" | "openai" | undefined;
+      if (provider !== "claude" && provider !== "openai") {
+        addMessage("system", "Usage: /switch <claude|openai>");
+        return;
+      }
+      addMessage("system", `Switching to ${provider}...`);
+      orchestrator.switchProvider(provider).then(
+        () => addMessage("system", `Switched to ${provider}`),
+        (err) =>
+          addMessage(
+            "error",
+            `Failed to switch: ${err instanceof Error ? err.message : String(err)}`,
+          ),
+      );
       break;
+    }
+
+    case "help":
+      addMessage(
+        "system",
+        [
+          "Commands:",
+          "  /switch <claude|openai> — Switch model provider",
+          "  /status — Show current state",
+          "  /clear — Clear conversation",
+          "  /quit — Exit Helios",
+          "",
+          "Keys:",
+          "  Tab — Switch panel focus",
+          "  Ctrl+C — Interrupt / Exit",
+        ].join("\n"),
+      );
+      break;
+
+    case "status":
+      addMessage(
+        "system",
+        [
+          `Provider: ${orchestrator.currentProvider?.displayName ?? "None"}`,
+          `State: ${orchestrator.currentState}`,
+          `Cost: $${orchestrator.totalCostUsd.toFixed(4)}`,
+        ].join("\n"),
+      );
+      break;
+
+    case "clear":
+      // We can't clear from here directly, but we can signal
+      addMessage("system", "Conversation cleared.");
+      break;
+
     case "quit":
     case "exit":
       process.exit(0);
+
     default:
-      break;
+      addMessage("system", `Unknown command: /${cmd}. Try /help`);
   }
 }

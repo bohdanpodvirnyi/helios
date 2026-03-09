@@ -1,21 +1,34 @@
 import { TokenStore } from "./token-store.js";
 import type { AuthCredentials, AuthMethod } from "../types.js";
 
-export interface AuthConfig {
-  claude: {
-    method: AuthMethod;
-    apiKey?: string;
-  };
-  openai: {
-    method: AuthMethod;
-  };
-}
-
 export class AuthManager {
   readonly tokenStore: TokenStore;
+  private refreshHandlers = new Map<
+    string,
+    (refreshToken: string) => Promise<{
+      accessToken: string;
+      refreshToken: string;
+      expiresAt: number;
+    }>
+  >();
 
   constructor() {
     this.tokenStore = new TokenStore();
+  }
+
+  /**
+   * Register a refresh handler for a provider.
+   * Called automatically when tokens need refreshing.
+   */
+  registerRefreshHandler(
+    provider: "claude" | "openai",
+    handler: (refreshToken: string) => Promise<{
+      accessToken: string;
+      refreshToken: string;
+      expiresAt: number;
+    }>,
+  ): void {
+    this.refreshHandlers.set(provider, handler);
   }
 
   async getCredentials(
@@ -24,7 +37,12 @@ export class AuthManager {
     const creds = this.tokenStore.get(provider);
     if (!creds) return null;
 
-    if (this.tokenStore.needsRefresh(provider) && creds.refreshToken) {
+    // Auto-refresh OAuth tokens when needed
+    if (
+      creds.method === "oauth" &&
+      this.tokenStore.needsRefresh(provider) &&
+      creds.refreshToken
+    ) {
       return this.refresh(provider, creds);
     }
 
@@ -61,17 +79,35 @@ export class AuthManager {
     const creds = this.tokenStore.get(provider);
     if (!creds) return false;
     if (creds.method === "api_key") return !!creds.apiKey;
-    return !!creds.accessToken && !this.tokenStore.isExpired(provider);
+    // For OAuth, consider authenticated if we have tokens
+    // (even if expired, we can try to refresh)
+    return !!(creds.accessToken || creds.refreshToken);
   }
 
   private async refresh(
     provider: "claude" | "openai",
     creds: AuthCredentials,
   ): Promise<AuthCredentials> {
-    // Provider-specific refresh logic will be implemented
-    // in the respective provider modules
-    throw new Error(
-      `Token refresh not yet implemented for ${provider}`,
-    );
+    const handler = this.refreshHandlers.get(provider);
+    if (!handler || !creds.refreshToken) {
+      // Can't refresh — return stale creds and let the API call fail
+      return creds;
+    }
+
+    try {
+      const tokens = await handler(creds.refreshToken);
+      const updated: AuthCredentials = {
+        method: "oauth",
+        provider,
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        expiresAt: tokens.expiresAt,
+      };
+      this.tokenStore.set(provider, updated);
+      return updated;
+    } catch {
+      // Refresh failed — return stale creds
+      return creds;
+    }
   }
 }

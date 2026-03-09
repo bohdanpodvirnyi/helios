@@ -1,10 +1,6 @@
 import React from "react";
 import { Box, Text } from "ink";
-
-interface Message {
-  role: string;
-  content: string;
-}
+import type { Message } from "../layout.js";
 
 interface ConversationPanelProps {
   messages: Message[];
@@ -24,20 +20,23 @@ export function ConversationPanel({
         flexGrow={1}
         paddingX={2}
       >
-        <Text color="gray">
-          Welcome to Helios. Send a message to start.
+        <Text color="magenta" bold>
+          HELIOS
+        </Text>
+        <Text color="gray">Autonomous ML Research Agent</Text>
+        <Text color="gray" dimColor>
+          Send a message to start, or /help for commands
         </Text>
       </Box>
     );
   }
 
-  // Show last N messages that fit the viewport
   const visibleMessages = messages.slice(-50);
 
   return (
     <Box flexDirection="column" flexGrow={1} paddingX={1}>
-      {visibleMessages.map((msg, i) => (
-        <MessageBubble key={i} message={msg} />
+      {visibleMessages.map((msg) => (
+        <MessageBubble key={msg.id} message={msg} />
       ))}
       {isStreaming && (
         <Text color="yellow" dimColor>
@@ -56,25 +55,22 @@ function MessageBubble({ message }: { message: Message }) {
       return (
         <Box marginBottom={1}>
           <Text color="blue" bold>
-            You:{" "}
+            {">"}{" "}
           </Text>
-          <Text>{content}</Text>
+          <Text wrap="wrap">{content}</Text>
         </Box>
       );
 
     case "assistant":
       return (
         <Box marginBottom={1} flexDirection="column">
-          <Text color="green" bold>
-            Helios:
-          </Text>
-          <Text>{content}</Text>
+          <Text wrap="wrap">{content}</Text>
         </Box>
       );
 
     case "tool":
       return (
-        <Box marginBottom={0}>
+        <Box>
           <Text color="gray" dimColor>
             {content}
           </Text>
@@ -91,16 +87,14 @@ function MessageBubble({ message }: { message: Message }) {
     case "system":
       return (
         <Box marginBottom={1}>
-          <Text color="yellow" dimColor>
-            {content}
-          </Text>
+          <Text color="yellow">{content}</Text>
         </Box>
       );
 
     default:
       return (
         <Box marginBottom={1}>
-          <Text>{content}</Text>
+          <Text wrap="wrap">{content}</Text>
         </Box>
       );
   }

@@ -1,41 +1,43 @@
 import { randomBytes, createHash } from "node:crypto";
 import { exec } from "node:child_process";
 import type { AuthManager } from "../auth/auth-manager.js";
+import { startCallbackServer } from "./callback-server.js";
 
 const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
+const AUTH_URL = "https://auth.openai.com/authorize";
+const TOKEN_URL = "https://auth.openai.com/oauth/token";
 const CALLBACK_PORT = 1455;
 const CALLBACK_PATH = "/auth/callback";
 const REDIRECT_URI = `http://127.0.0.1:${CALLBACK_PORT}${CALLBACK_PATH}`;
 
 /**
  * OpenAI OAuth 2.0 + PKCE flow.
- *
  * Authenticates via ChatGPT Plus/Pro subscription.
- * Reference: numman-ali/opencode-openai-codex-auth
  */
 export class OpenAIOAuth {
   constructor(private authManager: AuthManager) {}
 
-  /**
-   * Start the OAuth login flow.
-   * 1. Generate PKCE code_verifier + code_challenge
-   * 2. Start local callback server
-   * 3. Open browser to auth URL
-   * 4. Wait for callback with auth code
-   * 5. Exchange code for tokens
-   * 6. Store tokens
-   */
   async login(): Promise<void> {
-    const { verifier, challenge } = this.generatePKCE();
+    const { verifier, challenge } = generatePKCE();
     const state = randomBytes(32).toString("hex");
 
-    const authUrl = this.buildAuthUrl(challenge, state);
+    const authUrl = buildAuthUrl(challenge, state);
 
-    // Start callback server
-    const code = await this.startCallbackServer(state);
+    // Start callback server in parallel with browser open
+    const codePromise = startCallbackServer(
+      state,
+      CALLBACK_PORT,
+      CALLBACK_PATH,
+    );
+
+    // Open browser
+    openBrowser(authUrl);
+
+    // Wait for callback
+    const { code } = await codePromise;
 
     // Exchange code for tokens
-    const tokens = await this.exchangeCode(code, verifier);
+    const tokens = await exchangeCode(code, verifier);
 
     // Store
     await this.authManager.setOAuthTokens(
@@ -46,70 +48,105 @@ export class OpenAIOAuth {
     );
   }
 
-  /**
-   * Refresh an expired token.
-   */
   async refresh(refreshToken: string): Promise<{
     accessToken: string;
     refreshToken: string;
     expiresAt: number;
   }> {
-    // TODO: Implement token refresh against OpenAI's token endpoint
-    throw new Error("OpenAI token refresh not yet implemented");
-  }
-
-  private generatePKCE(): { verifier: string; challenge: string } {
-    const verifier = randomBytes(32)
-      .toString("base64url")
-      .replace(/[^a-zA-Z0-9\-._~]/g, "");
-    const challenge = createHash("sha256")
-      .update(verifier)
-      .digest("base64url");
-    return { verifier, challenge };
-  }
-
-  private buildAuthUrl(challenge: string, state: string): string {
-    const params = new URLSearchParams({
-      client_id: CLIENT_ID,
-      redirect_uri: REDIRECT_URI,
-      response_type: "code",
-      code_challenge: challenge,
-      code_challenge_method: "S256",
-      state,
-      scope: "openid profile email",
+    const resp = await fetch(TOKEN_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        grant_type: "refresh_token",
+        client_id: CLIENT_ID,
+        refresh_token: refreshToken,
+      }),
     });
 
-    return `https://auth.openai.com/authorize?${params.toString()}`;
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error(`Token refresh failed: ${resp.status} ${text}`);
+    }
+
+    const data = (await resp.json()) as {
+      access_token: string;
+      refresh_token: string;
+      expires_in: number;
+    };
+
+    return {
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token,
+      expiresAt: Date.now() + data.expires_in * 1000,
+    };
+  }
+}
+
+function generatePKCE(): { verifier: string; challenge: string } {
+  const verifier = randomBytes(32).toString("base64url");
+  const challenge = createHash("sha256")
+    .update(verifier)
+    .digest("base64url");
+  return { verifier, challenge };
+}
+
+function buildAuthUrl(challenge: string, state: string): string {
+  const params = new URLSearchParams({
+    client_id: CLIENT_ID,
+    redirect_uri: REDIRECT_URI,
+    response_type: "code",
+    code_challenge: challenge,
+    code_challenge_method: "S256",
+    state,
+    scope: "openid profile email offline_access",
+  });
+  return `${AUTH_URL}?${params.toString()}`;
+}
+
+async function exchangeCode(
+  code: string,
+  verifier: string,
+): Promise<{
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: number;
+}> {
+  const resp = await fetch(TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      grant_type: "authorization_code",
+      client_id: CLIENT_ID,
+      code,
+      code_verifier: verifier,
+      redirect_uri: REDIRECT_URI,
+    }),
+  });
+
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`Token exchange failed: ${resp.status} ${text}`);
   }
 
-  private async startCallbackServer(expectedState: string): Promise<string> {
-    // TODO: Start Hono server on CALLBACK_PORT
-    // Listen for GET on CALLBACK_PATH
-    // Validate state parameter
-    // Return authorization code
-    throw new Error("Callback server not yet implemented");
-  }
+  const data = (await resp.json()) as {
+    access_token: string;
+    refresh_token: string;
+    expires_in: number;
+  };
 
-  private async exchangeCode(
-    code: string,
-    verifier: string,
-  ): Promise<{
-    accessToken: string;
-    refreshToken: string;
-    expiresAt: number;
-  }> {
-    // TODO: POST to OpenAI token endpoint
-    // Include code, verifier, client_id, redirect_uri
-    throw new Error("Token exchange not yet implemented");
-  }
+  return {
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token,
+    expiresAt: Date.now() + data.expires_in * 1000,
+  };
+}
 
-  private openBrowser(url: string): void {
-    const cmd =
-      process.platform === "darwin"
-        ? "open"
-        : process.platform === "win32"
-          ? "start"
-          : "xdg-open";
-    exec(`${cmd} "${url}"`);
-  }
+function openBrowser(url: string): void {
+  const cmd =
+    process.platform === "darwin"
+      ? "open"
+      : process.platform === "win32"
+        ? "start"
+        : "xdg-open";
+  exec(`${cmd} "${url}"`);
 }
