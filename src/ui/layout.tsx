@@ -41,7 +41,16 @@ export function Layout({ runtime, mouseEmitter, headless, initialPrompt, initial
     memoryStore, stickyManager, agentName,
   } = runtime;
   const { exit } = useApp();
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<Message[]>(() => {
+    // If a session was already resumed (via -r / -c flags) before Layout mounted,
+    // pre-populate the UI with stored messages so the user can see conversation history.
+    const session = orchestrator.activeSession;
+    if (!session) return [];
+    const stored = orchestrator.sessionStore.getMessages(session.id, 500);
+    return stored
+      .filter((m) => m.role === "user" || m.role === "assistant")
+      .map((m) => ({ id: ++messageIdCounter, role: m.role as Message["role"], content: m.content }));
+  });
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
   const [isStreaming, setIsStreaming] = useState(false);

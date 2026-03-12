@@ -158,12 +158,15 @@ export class OpenAIProvider implements ModelProvider {
     return session;
   }
 
-  async resumeSession(id: string): Promise<Session> {
+  async resumeSession(id: string, systemPrompt?: string): Promise<Session> {
     const session = this.sessionStore.getSession(id);
     if (!session) throw new Error(`Session ${id} not found`);
+
+    if (systemPrompt) {
+      this.instructions.set(id, systemPrompt);
+    }
+
     if (!this.conversationHistory.has(id)) {
-      // Restore conversation history from stored messages so the model
-      // has context from the previous session.
       const stored = this.sessionStore.getMessages(id, 500);
       const history: ResponseItem[] = stored
         .filter((m) => m.role === "user" || m.role === "assistant")

@@ -171,12 +171,22 @@ export class ClaudeProvider implements ModelProvider {
     return session;
   }
 
-  async resumeSession(id: string): Promise<Session> {
+  async resumeSession(id: string, systemPrompt?: string): Promise<Session> {
     const session = this.sessionStore.getSession(id);
     if (!session) throw new Error(`Session ${id} not found`);
+
+    // Restore system prompt so the model keeps its instructions
+    if (systemPrompt) {
+      this.systemPrompts.set(id, systemPrompt);
+    }
+
+    // Restore SDK session mapping for CLI mode resume
+    if (session.providerSessionId && !this.sdkSessionIds.has(id)) {
+      this.sdkSessionIds.set(id, session.providerSessionId);
+    }
+
+    // Restore conversation history for raw API mode
     if (!this.conversationHistory.has(id)) {
-      // Restore conversation history from stored messages so the model
-      // has context from the previous session.
       const stored = this.sessionStore.getMessages(id, 500);
       const history: AnthropicMessage[] = stored
         .filter((m) => m.role === "user" || m.role === "assistant")
@@ -311,6 +321,7 @@ export class ClaudeProvider implements ModelProvider {
           debugLog("claude-sdk", "session established", msg.session_id);
           this.sdkSessionIds.set(session.id, msg.session_id);
           session.providerSessionId = msg.session_id;
+          this.sessionStore.updateProviderSessionId(session.id, msg.session_id);
         }
 
         // Check for SDK errors that indicate stale session — retry without resume

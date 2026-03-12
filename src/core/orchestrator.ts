@@ -25,7 +25,7 @@ export interface OrchestratorConfig {
 export class Orchestrator {
   private providers = new Map<string, ModelProvider>();
   private activeProvider: ModelProvider | null = null;
-  private activeSession: Session | null = null;
+  private _activeSession: Session | null = null;
   private tools: ToolDefinition[] = [];
   private _totalCostUsd = 0;
   private _lastInputTokens = 0;
@@ -34,6 +34,8 @@ export class Orchestrator {
   readonly stateMachine = new AgentStateMachine();
   readonly sessionStore: SessionStore;
   readonly config: OrchestratorConfig;
+
+  get activeSession(): Session | null { return this._activeSession; }
 
   constructor(config: OrchestratorConfig) {
     this.config = config;
@@ -79,9 +81,9 @@ export class Orchestrator {
     debugLog("orchestrator", "switching provider", name);
 
     // Clean up old session before switching
-    if (this.activeSession && this.activeProvider) {
-      await this.activeProvider.closeSession(this.activeSession).catch(() => {});
-      this.activeSession = null;
+    if (this._activeSession && this.activeProvider) {
+      await this.activeProvider.closeSession(this._activeSession).catch(() => {});
+      this._activeSession = null;
     }
 
     await provider.authenticate();
@@ -92,7 +94,7 @@ export class Orchestrator {
   }
 
   async ensureSession(): Promise<Session> {
-    if (this.activeSession) return this.activeSession;
+    if (this._activeSession) return this._activeSession;
     return this.startSession();
   }
 
@@ -108,7 +110,7 @@ export class Orchestrator {
 
     const session =
       await this.activeProvider!.createSession(sessionConfig);
-    this.activeSession = session;
+    this._activeSession = session;
 
     // Bind memory store to this session
     if (this._contextGate) {
@@ -133,8 +135,8 @@ export class Orchestrator {
     }
 
     // Ask the provider to resume its side (re-hydrate conversation history etc.)
-    const session = await this.activeProvider!.resumeSession(stored.id);
-    this.activeSession = session;
+    const session = await this.activeProvider!.resumeSession(stored.id, this.config.systemPrompt);
+    this._activeSession = session;
 
     if (this.stateMachine.state === "idle") {
       this.stateMachine.transition("active", "Session resumed");
@@ -213,8 +215,8 @@ export class Orchestrator {
   }
 
   interrupt(): void {
-    if (this.activeProvider && this.activeSession) {
-      this.activeProvider.interrupt(this.activeSession);
+    if (this.activeProvider && this._activeSession) {
+      this.activeProvider.interrupt(this._activeSession);
     }
     if (this._activeAbort) {
       this._activeAbort.abort();
@@ -223,7 +225,7 @@ export class Orchestrator {
   }
 
   get currentSession(): Session | null {
-    return this.activeSession;
+    return this._activeSession;
   }
 
   get currentProvider(): ModelProvider | null {
@@ -241,9 +243,9 @@ export class Orchestrator {
   /** Record cost from external sources (e.g. skill executor). */
   addCost(costUsd: number, inputTokens?: number, outputTokens?: number): void {
     this._totalCostUsd += costUsd;
-    if (this.activeSession) {
+    if (this._activeSession) {
       this.sessionStore.addCost(
-        this.activeSession.id,
+        this._activeSession.id,
         costUsd,
         inputTokens ?? 0,
         outputTokens ?? 0,
@@ -261,9 +263,9 @@ export class Orchestrator {
     }
     this.activeProvider!.currentModel = model;
     // Reset session so next message uses the new model
-    if (this.activeSession) {
-      await this.activeProvider!.closeSession(this.activeSession);
-      this.activeSession = null;
+    if (this._activeSession) {
+      await this.activeProvider!.closeSession(this._activeSession);
+      this._activeSession = null;
     }
   }
 

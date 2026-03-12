@@ -79,6 +79,14 @@ export class SessionStore {
     };
   }
 
+  updateProviderSessionId(sessionId: string, providerSessionId: string): void {
+    const db = getDb();
+    db.prepare("UPDATE sessions SET provider_session_id = ? WHERE id = ?").run(
+      providerSessionId,
+      sessionId,
+    );
+  }
+
   updateLastActive(sessionId: string): void {
     const db = getDb();
     db.prepare("UPDATE sessions SET last_active_at = ? WHERE id = ?").run(

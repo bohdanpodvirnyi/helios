@@ -99,7 +99,7 @@ export interface ModelProvider {
   createSession(config: SessionConfig): Promise<Session>;
 
   /** Resume an existing session */
-  resumeSession(id: string): Promise<Session>;
+  resumeSession(id: string, systemPrompt?: string): Promise<Session>;
 
   /** Send a message and stream events */
   send(
