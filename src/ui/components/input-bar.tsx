@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, memo } from "react";
 import { Box, Text, useInput } from "ink";
 import { C, G } from "../theme.js";
 import type { SlashCommand } from "../commands.js";
@@ -10,7 +10,7 @@ interface InputBarProps {
   commands?: SlashCommand[];
 }
 
-export function InputBar({
+export const InputBar = memo(function InputBar({
   onSubmit,
   disabled = false,
   placeholder = "send a message...",
@@ -197,7 +197,7 @@ export function InputBar({
       </Box>
     </Box>
   );
-}
+});
 
 function CursorText({ text, cursorPos }: { text: string; cursorPos: number }) {
   const before = text.slice(0, cursorPos);

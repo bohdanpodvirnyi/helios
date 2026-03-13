@@ -1,5 +1,6 @@
-import type { MetricCondition } from "./types.js";
+import type { MetricCondition, Comparator } from "./types.js";
 import type { ConnectionPool } from "../../remote/connection-pool.js";
+import { shellQuote } from "../../ui/format.js";
 
 export async function evaluateMetric(
   condition: MetricCondition,
@@ -20,7 +21,7 @@ async function fetchMetricValue(
     case "json_file": {
       const result = await pool.exec(
         machineId,
-        `cat ${source.path} 2>/dev/null`,
+        `cat ${shellQuote(source.path)} 2>/dev/null`,
       );
       if (result.exitCode !== 0) return null;
       try {
@@ -32,20 +33,16 @@ async function fetchMetricValue(
     }
 
     case "csv_file": {
-      // Read last line of CSV
+      // Read header + last line in a single SSH call
       const result = await pool.exec(
         machineId,
-        `tail -1 ${source.path} 2>/dev/null`,
+        `{ head -1 ${shellQuote(source.path)} && tail -1 ${shellQuote(source.path)}; } 2>/dev/null`,
       );
       if (result.exitCode !== 0 || !result.stdout.trim()) return null;
-
-      // Read header
-      const headerResult = await pool.exec(
-        machineId,
-        `head -1 ${source.path}`,
-      );
-      const headers = headerResult.stdout.trim().split(",");
-      const values = result.stdout.trim().split(",");
+      const lines = result.stdout.trim().split("\n");
+      if (lines.length < 2) return null;
+      const headers = lines[0].split(",");
+      const values = lines[lines.length - 1].split(",");
       const idx = headers.indexOf(field);
       if (idx === -1) return null;
       return parseFloat(values[idx]);
@@ -74,9 +71,11 @@ function extractField(obj: unknown, path: string): number | null {
   return typeof current === "number" ? current : null;
 }
 
-function compareValue(
+export { type Comparator } from "./types.js";
+
+export function compareValue(
   value: number,
-  comparator: MetricCondition["comparator"],
+  comparator: Comparator,
   threshold: number,
 ): boolean {
   switch (comparator) {
@@ -92,5 +91,7 @@ function compareValue(
       return value === threshold;
     case "!=":
       return value !== threshold;
+    default:
+      return false;
   }
 }

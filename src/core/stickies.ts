@@ -13,6 +13,9 @@ export class StickyManager {
   private nextNum = 1;
 
   add(text: string): StickyNote {
+    if (this.notes.length >= 20) {
+      throw new Error("Maximum of 20 sticky notes reached. Remove some with /unpin before adding more.");
+    }
     const note: StickyNote = {
       num: this.nextNum++,
       text,

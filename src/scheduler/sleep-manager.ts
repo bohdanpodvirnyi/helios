@@ -1,5 +1,6 @@
 import { nanoid } from "nanoid";
 import { EventEmitter } from "node:events";
+import { formatError } from "../ui/format.js";
 import type {
   SleepSession,
   Trigger,
@@ -32,7 +33,12 @@ export class SleepManager extends EventEmitter {
     super();
 
     this.scheduler.on("wake", (session: SleepSession, reason: string) => {
-      this.handleWake(session, reason);
+      try {
+        this.handleWake(session, reason);
+      } catch (err) {
+        // Don't let a wake handler crash the scheduler
+        process.stderr.write(`[helios] Wake handler error: ${formatError(err)}\n`);
+      }
     });
   }
 

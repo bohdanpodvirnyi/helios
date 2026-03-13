@@ -1,6 +1,6 @@
 import type { ToolDefinition } from "../providers/types.js";
 import type { ConnectionPool } from "../remote/connection-pool.js";
-import { shellQuote, toolError } from "../ui/format.js";
+import { shellQuote, toolError, splitAtSentinel } from "../ui/format.js";
 
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
 const PDF_EXTENSIONS = new Set([".pdf"]);
@@ -92,21 +92,30 @@ export function createReadFileTool(pool: ConnectionPool): ToolDefinition {
       const offset = (args.offset as number) ?? 1;
       const limit = (args.limit as number) ?? 200;
       const end = offset + limit - 1;
+      const safeOffset = Math.max(1, Math.floor(offset));
+      const safeEnd = Math.max(safeOffset, Math.floor(end));
+      const quoted = shellQuote(path);
       const result = await pool.exec(
         machineId,
-        `sed -n '${offset},${end}p' ${shellQuote(path)}`,
+        `{ sed -n '${safeOffset},${safeEnd}p' ${quoted} && echo '---HELIOS_LINECOUNT---' && wc -l < ${quoted}; } 2>/dev/null`,
       );
 
       if (result.exitCode !== 0) {
         return toolError(result.stderr.trim() || `exit code ${result.exitCode}`);
       }
 
-      // Count total lines for context
-      const wcResult = await pool.exec(machineId, `wc -l < ${shellQuote(path)}`);
-      const totalLines = parseInt(wcResult.stdout.trim(), 10) || 0;
+      const split = splitAtSentinel(result.stdout, '---HELIOS_LINECOUNT---');
+      let content: string;
+      let totalLines = 0;
+      if (split) {
+        content = split.before;
+        totalLines = parseInt(split.after, 10) || 0;
+      } else {
+        content = result.stdout;
+      }
 
       return JSON.stringify({
-        content: result.stdout,
+        content,
         lines: { from: offset, to: Math.min(end, totalLines), total: totalLines },
       });
     },
@@ -146,28 +155,27 @@ export function createWriteFileTool(pool: ConnectionPool): ToolDefinition {
       const content = args.content as string;
       const append = (args.append as boolean) ?? false;
 
-      // Ensure parent directory exists
+      // Ensure parent directory exists, write file, and count lines in one SSH call
       const dir = path.replace(/\/[^/]+$/, "");
-      if (dir && dir !== path) {
-        await pool.exec(machineId, `mkdir -p ${shellQuote(dir)}`);
-      }
-
       const op = append ? ">>" : ">";
       // Use heredoc to handle multi-line content safely
       // Heredoc implicitly adds a trailing newline, so strip one from content to avoid doubling
       const body = content.endsWith("\n") ? content.slice(0, -1) : content;
       const heredocTag = "_HELIOS_EOF_" + Math.random().toString(36).slice(2, 8);
+      const quoted = shellQuote(path);
+      const mkdirPart = dir && dir !== path ? `mkdir -p ${shellQuote(dir)} && ` : "";
       const result = await pool.exec(
         machineId,
-        `cat ${op} ${shellQuote(path)} <<'${heredocTag}'\n${body}\n${heredocTag}`,
+        `${mkdirPart}cat ${op} ${quoted} <<'${heredocTag}'\n${body}\n${heredocTag}\nwc -l < ${quoted}`,
       );
 
       if (result.exitCode !== 0) {
         return toolError(result.stderr.trim() || `exit code ${result.exitCode}`);
       }
 
-      const wcResult = await pool.exec(machineId, `wc -l < ${shellQuote(path)}`);
-      const totalLines = parseInt(wcResult.stdout.trim(), 10) || 0;
+      // The last line of stdout is the line count from wc -l
+      const lines = result.stdout.trimEnd().split('\n');
+      const totalLines = parseInt(lines[lines.length - 1].trim(), 10) || 0;
 
       return JSON.stringify({ written: path, lines: totalLines });
     },

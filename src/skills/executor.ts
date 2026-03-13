@@ -2,7 +2,7 @@ import type { Skill } from "./types.js";
 import type { ToolDefinition, AgentEvent, ModelProvider } from "../providers/types.js";
 import type { Orchestrator } from "../core/orchestrator.js";
 import { renderTemplate } from "./loader.js";
-import { formatError } from "../ui/format.js";
+import { formatError, toError } from "../ui/format.js";
 /** Sleep that can be interrupted by an AbortSignal. */
 function interruptibleSleep(ms: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted) return Promise.resolve();
@@ -119,19 +119,17 @@ export async function* executeSkill(
   }
 
   // Ensure the provider is authenticated (skills can target any provider)
-  if (skill.config.provider) {
-    try {
-      if (!(await provider.isAuthenticated())) {
-        await provider.authenticate();
-      }
-    } catch (err) {
-      yield {
-        type: "error",
-        error: err instanceof Error ? err : new Error(String(err)),
-        recoverable: false,
-      };
-      return;
+  try {
+    if (!(await provider.isAuthenticated())) {
+      await provider.authenticate();
     }
+  } catch (err) {
+    yield {
+      type: "error",
+      error: toError(err),
+      recoverable: false,
+    };
+    return;
   }
 
   const tools = filterTools(ctx.allTools, skill);
@@ -158,7 +156,7 @@ export async function* executeSkill(
     } catch (err) {
       yield {
         type: "error",
-        error: err instanceof Error ? err : new Error(String(err)),
+        error: toError(err),
         recoverable: true,
       };
     }

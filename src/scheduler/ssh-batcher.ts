@@ -1,4 +1,5 @@
 import type { ConnectionPool } from "../remote/connection-pool.js";
+import { shellQuote, toError } from "../ui/format.js";
 
 interface BatchEntry {
   id: string;
@@ -9,6 +10,9 @@ interface BatchEntry {
 
 const DELIMITER_PREFIX = "---HELIOS_DELIM:";
 const DELIMITER_SUFFIX = "---";
+const DELIMITER_REGEX = new RegExp(
+  `^${DELIMITER_PREFIX.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(.+?)${DELIMITER_SUFFIX}$`,
+);
 
 /**
  * Batches SSH commands per host per evaluation cycle.
@@ -61,9 +65,7 @@ export class SSHBatcher {
         );
         entries[0].resolve(result.stdout);
       } catch (err) {
-        entries[0].reject(
-          err instanceof Error ? err : new Error(String(err)),
-        );
+        entries[0].reject(toError(err));
       }
       return;
     }
@@ -72,7 +74,7 @@ export class SSHBatcher {
     const batchedCommand = entries
       .map(
         (entry) =>
-          `echo "${DELIMITER_PREFIX}${entry.id}${DELIMITER_SUFFIX}"\n${entry.command}`,
+          `echo ${shellQuote(DELIMITER_PREFIX + entry.id + DELIMITER_SUFFIX)}\n${entry.command}`,
       )
       .join("\n");
 
@@ -91,8 +93,7 @@ export class SSHBatcher {
         }
       }
     } catch (err) {
-      const error =
-        err instanceof Error ? err : new Error(String(err));
+      const error = toError(err);
       for (const entry of entries) {
         entry.reject(error);
       }
@@ -110,11 +111,7 @@ export class SSHBatcher {
     let currentLines: string[] = [];
 
     for (const line of lines) {
-      const delimMatch = line.match(
-        new RegExp(
-          `^${DELIMITER_PREFIX.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(.+?)${DELIMITER_SUFFIX}$`,
-        ),
-      );
+      const delimMatch = line.match(DELIMITER_REGEX);
 
       if (delimMatch) {
         if (currentId) {

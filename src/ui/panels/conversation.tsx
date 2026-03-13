@@ -1,4 +1,4 @@
-import { useState, useEffect, memo, useMemo } from "react";
+import { useState, useEffect, useRef, memo, useMemo } from "react";
 import { Box, Text } from "ink";
 import { C, G, METRIC_COLORS, nameHash } from "../theme.js";
 import { renderMarkdown } from "../markdown.js";
@@ -52,8 +52,38 @@ export const MessageLine = memo(function MessageLine({ message }: { message: Mes
   }
 });
 
+const MD_THROTTLE_MS = 150;
+
 function AssistantMessage({ content }: { content: string }) {
-  const rendered = useMemo(() => renderMarkdown(content), [content]);
+  const [rendered, setRendered] = useState(() => renderMarkdown(content));
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastRenderTimeRef = useRef(Date.now());
+  const lastContentRef = useRef(content);
+
+  useEffect(() => {
+    // Skip if content hasn't changed (avoids double-render on mount)
+    if (lastContentRef.current === content && rendered) return;
+    lastContentRef.current = content;
+
+    if (timerRef.current) clearTimeout(timerRef.current);
+
+    const elapsed = Date.now() - lastRenderTimeRef.current;
+
+    if (elapsed >= MD_THROTTLE_MS) {
+      lastRenderTimeRef.current = Date.now();
+      setRendered(renderMarkdown(content));
+    } else {
+      timerRef.current = setTimeout(() => {
+        lastRenderTimeRef.current = Date.now();
+        setRendered(renderMarkdown(content));
+      }, MD_THROTTLE_MS - elapsed);
+    }
+
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, [content]);
+
   return (
     <Box paddingLeft={2}>
       <Text wrap="wrap">{rendered}</Text>
@@ -87,6 +117,12 @@ function ToolCallBlock({ tool }: { tool: ToolData }) {
       return <FileSyncDisplay tool={tool} />;
     case "sleep":
       return <SleepDisplay tool={tool} />;
+    case "subagent":
+      return <SubagentDisplay tool={tool} />;
+    case "subagent_status":
+      return <SubagentStatusDisplay tool={tool} />;
+    case "subagent_result":
+      return <SubagentResultDisplay tool={tool} />;
     case "start_monitor":
       return <MonitorDisplay tool={tool} />;
     case "stop_monitor":
@@ -132,7 +168,7 @@ function parseResult(tool: ToolData): Record<string, unknown> | null {
 function ExecDisplay({ tool }: { tool: ToolData }) {
   const machine = (tool.args.machine_id as string) ?? "?";
   const command = (tool.args.command as string) ?? "";
-  const result = parseResult(tool);
+  const result = useMemo(() => parseResult(tool), [tool.result]);
   const stdout = result?.stdout as string | undefined;
   const stderr = result?.stderr as string | undefined;
   const exitCode = result?.exit_code as number | undefined;
@@ -274,7 +310,7 @@ function SleepDisplay({ tool }: { tool: ToolData }) {
 function TaskOutputDisplay({ tool }: { tool: ToolData }) {
   const machine = (tool.args.machine_id as string) ?? "?";
   const pid = tool.args.pid as number;
-  const result = parseResult(tool);
+  const result = useMemo(() => parseResult(tool), [tool.result]);
   const output = result?.output as string | undefined;
   const running = result?.running as boolean | undefined;
 
@@ -341,7 +377,7 @@ function ListMachinesDisplay({ tool }: { tool: ToolData }) {
 // ── show_metrics ────────────────────────────────────────────────────
 
 function ShowMetricsDisplay({ tool }: { tool: ToolData }) {
-  const result = parseResult(tool);
+  const result = useMemo(() => parseResult(tool), [tool.result]);
   const metrics = (result?.metrics ?? []) as Array<{
     name: string;
     values: number[];
@@ -511,6 +547,106 @@ function CompareRunsDisplay({ tool }: { tool: ToolData }) {
           <Text color={C.error}>{String(result.error)}</Text>
         </Box>
       ) : null}
+    </Box>
+  );
+}
+
+// ── subagent ─────────────────────────────────────────────────────────
+
+function SubagentDisplay({ tool }: { tool: ToolData }) {
+  const task = (tool.args.task as string) ?? "";
+  const model = (tool.args.model as string) ?? "";
+  const result = parseResult(tool);
+  const id = result?.id as string | undefined;
+
+  return (
+    <Box flexDirection="column" paddingLeft={2}>
+      <ToolHeader icon="⊕" label="subagent" detail={model ? `${model}` : undefined} />
+      <Box paddingLeft={2}>
+        <Text color={C.dim} dimColor>{"┃ "}</Text>
+        <Text color={C.text} wrap="wrap">{truncate(task, 80)}</Text>
+      </Box>
+      {id && (
+        <Box paddingLeft={2}>
+          <Text color={C.dim} dimColor>{"┃ "}</Text>
+          <Text color={C.dim}>id </Text>
+          <Text color={C.text}>{id}</Text>
+        </Box>
+      )}
+      {tool.isError && tool.result && (
+        <Box paddingLeft={2}>
+          <Text color={C.dim} dimColor>{"┃ "}</Text>
+          <Text color={C.error}>{truncate(tool.result, 80)}</Text>
+        </Box>
+      )}
+    </Box>
+  );
+}
+
+function SubagentStatusDisplay({ tool }: { tool: ToolData }) {
+  const result = parseResult(tool);
+  const subagents = (result?.subagents ?? (result ? [result] : [])) as Array<{
+    id: string;
+    status: string;
+    task: string;
+    model: string;
+    elapsed: string;
+    cost_usd: number;
+  }>;
+
+  return (
+    <Box flexDirection="column" paddingLeft={2}>
+      <ToolHeader icon="⊕" label="subagent_status" />
+      {subagents.length > 0 ? subagents.map((sa) => (
+        <Box key={sa.id} paddingLeft={2}>
+          <Text color={C.dim} dimColor>{"┃ "}</Text>
+          <Text color={sa.status === "running" ? C.primary : sa.status === "completed" ? C.success : C.error}>
+            {sa.id}
+          </Text>
+          <Text color={C.dim}> {sa.status} {sa.elapsed} ${sa.cost_usd?.toFixed(4) ?? "0"}</Text>
+        </Box>
+      )) : (
+        <Box paddingLeft={2}>
+          <Text color={C.dim} dimColor>{"┃ "}</Text>
+          <Text color={C.dim}>no subagents</Text>
+        </Box>
+      )}
+    </Box>
+  );
+}
+
+function SubagentResultDisplay({ tool }: { tool: ToolData }) {
+  const id = (tool.args.id as string) ?? "?";
+  const result = parseResult(tool);
+  const status = result?.status as string | undefined;
+  const text = result?.result as string | undefined;
+  const elapsed = result?.elapsed as string | undefined;
+  const costUsd = result?.cost_usd as number | undefined;
+
+  return (
+    <Box flexDirection="column" paddingLeft={2}>
+      <ToolHeader
+        icon="⊕"
+        label={`subagent_result ${id}`}
+        detail={status === "running" ? "still running…" : elapsed ? `${elapsed}` : undefined}
+      />
+      {text ? (
+        <Box paddingLeft={2}>
+          <Text color={C.dim} dimColor>{"┃ "}</Text>
+          <Text color={C.text} wrap="wrap">{trimOutput(text, 20)}</Text>
+        </Box>
+      ) : !tool.result ? (
+        <Box paddingLeft={2}>
+          <Text color={C.dim} dimColor>{"┃ "}</Text>
+          <Text color={C.dim}>fetching…</Text>
+        </Box>
+      ) : null}
+      {costUsd !== undefined && (
+        <Box paddingLeft={2}>
+          <Text color={C.dim} dimColor>{"┃ "}</Text>
+          <Text color={C.dim}>${costUsd.toFixed(4)}</Text>
+        </Box>
+      )}
     </Box>
   );
 }

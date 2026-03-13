@@ -1,3 +1,6 @@
+/** Canonical comparator type used by metric and resource conditions. */
+export type Comparator = "<" | ">" | "<=" | ">=" | "==" | "!=";
+
 // --- Trigger Conditions ---
 
 export interface TimerCondition {
@@ -27,7 +30,7 @@ export interface MetricCondition {
   machineId: string;
   source: MetricSource;
   field: string;
-  comparator: "<" | ">" | "<=" | ">=" | "==" | "!=";
+  comparator: Comparator;
   threshold: number;
   /** Require condition to hold for N consecutive checks */
   sustainedChecks?: number;
@@ -44,7 +47,8 @@ export interface ResourceCondition {
   machineId: string;
   resource: "gpu_util" | "gpu_memory" | "cpu" | "memory" | "disk";
   gpuIndex?: number;
-  comparator: "<" | ">" | "<=" | ">=";
+  comparator: Extract<Comparator, "<" | ">" | "<=" | ">=">;
+
   threshold: number;
   sustainedChecks?: number;
 }

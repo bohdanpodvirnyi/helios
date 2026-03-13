@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { getHeliosDir } from "../store/database.js";
 import type { SleepSession } from "./triggers/types.js";
@@ -45,7 +45,6 @@ export class TriggerStateStore {
     // Atomic write
     const tmpPath = this.filePath + ".tmp";
     writeFileSync(tmpPath, JSON.stringify(state, null, 2));
-    const { renameSync } = require("node:fs");
     renameSync(tmpPath, this.filePath);
   }
 

@@ -46,6 +46,29 @@ export function shellQuote(s: string): string {
   return "'" + s.replace(/'/g, "'\\''") + "'";
 }
 
+/** Coerce an unknown thrown value to an Error instance. */
+export function toError(err: unknown): Error {
+  return err instanceof Error ? err : new Error(String(err));
+}
+
+/** Run a promise with a timeout. Cleans up the timer on completion. */
+export function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`"${label}" timed out after ${ms / 1000}s`)), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+/** Split stdout at a sentinel string, returning before/after parts. */
+export function splitAtSentinel(output: string, sentinel: string): { before: string; after: string } | null {
+  const idx = output.lastIndexOf(sentinel);
+  if (idx < 0) return null;
+  return { before: output.slice(0, idx), after: output.slice(idx + sentinel.length).trim() };
+}
+
 /** Standard JSON error response for tool execute() returns. */
 export function toolError(err: unknown): string {
   return JSON.stringify({ error: formatError(err) });

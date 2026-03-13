@@ -1,4 +1,4 @@
-import React from "react";
+import React, { memo } from "react";
 import { Box, Text } from "ink";
 import { C, G } from "../theme.js";
 
@@ -8,7 +8,7 @@ const HINTS = [
   { key: "^g", label: "metrics" },
 ];
 
-export function KeyHintRule() {
+export const KeyHintRule = memo(function KeyHintRule() {
   const w = process.stdout.columns || 80;
 
   let hintsWidth = 0;
@@ -33,4 +33,4 @@ export function KeyHintRule() {
       ))}
     </Box>
   );
-}
+});

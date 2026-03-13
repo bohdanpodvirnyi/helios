@@ -12,6 +12,7 @@ import type { ExperimentTracker } from "../memory/experiment-tracker.js";
 import type { Notifier } from "../notifications/notifier.js";
 import type { BackgroundProcess } from "../remote/types.js";
 import type { MonitorConfig } from "./monitor.js";
+import { shellQuote } from "../ui/format.js";
 
 export interface TaskStatus {
   proc: BackgroundProcess;
@@ -82,7 +83,7 @@ export async function handleFinishedTasks(
         (p) => p.machineId === machineId && p.pid === pid,
       );
       if (proc?.logPath) {
-        const result = await connectionPool.exec(machineId, `cat ${proc.logPath}.exit 2>/dev/null`);
+        const result = await connectionPool.exec(machineId, `cat ${shellQuote(proc.logPath + '.exit')} 2>/dev/null`);
         const parsed = parseInt(result.stdout.trim(), 10);
         if (!isNaN(parsed)) exitCode = parsed;
       }

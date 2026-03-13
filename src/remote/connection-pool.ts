@@ -30,6 +30,17 @@ interface PooledConnection {
 /** Max characters to buffer from a single command's stdout or stderr. */
 const MAX_EXEC_OUTPUT = 512 * 1024; // 512 KB
 
+/** Cache SSH key file reads to avoid repeated disk I/O on reconnects. */
+const keyCache = new Map<string, Buffer>();
+function readKeyFile(path: string): Buffer {
+  let buf = keyCache.get(path);
+  if (!buf) {
+    buf = readFileSync(path);
+    keyCache.set(path, buf);
+  }
+  return buf;
+}
+
 function capOutput(str: string, max: number): string {
   if (str.length <= max) return str;
   const half = Math.floor(max / 2) - 40;
@@ -130,7 +141,7 @@ export class ConnectionPool {
 
       if (machine.authMethod === "key" && machine.keyPath) {
         try {
-          connectConfig.privateKey = readFileSync(machine.keyPath);
+          connectConfig.privateKey = readKeyFile(machine.keyPath);
         } catch (err) {
           return reject(new Error(`Cannot read SSH key at ${machine.keyPath}: ${formatError(err)}`));
         }
@@ -178,7 +189,15 @@ export class ConnectionPool {
         stream.on("error", (streamErr: Error) => {
           reject(streamErr);
         });
+
+        // Timeout for remote commands (5 minutes)
+        const timeout = setTimeout(() => {
+          try { stream.close(); } catch { /* best effort */ }
+          reject(new Error(`Command timed out after 300s on ${machineId}`));
+        }, 300_000);
+
         stream.on("close", (code: number) => {
+          clearTimeout(timeout);
           resolve({
             stdout: capOutput(stdout, maxOutput),
             stderr: capOutput(stderr, maxOutput),
@@ -227,10 +246,12 @@ export class ConnectionPool {
     // Remote: use nohup + & over SSH (SSH channels close cleanly)
     // PYTHONUNBUFFERED ensures Python flushes stdout immediately for live metric capture
     // Write exit code to .exit file so we can retrieve it later (can't use `wait` from a different shell)
-    const wrappedCmd = `PYTHONUNBUFFERED=1 nohup sh -c '${command.replace(/'/g, "'\\''")}; echo $? > ${log}.exit' > ${log} 2>&1 & echo $!`;
+    const quotedLog = shellQuote(log);
+    const escapedLog = log.replace(/'/g, "'\\''");
+    const wrappedCmd = `PYTHONUNBUFFERED=1 nohup sh -c '${command.replace(/'/g, "'\\''")}; echo $? > ${escapedLog}.exit' > ${quotedLog} 2>&1 & echo $!`;
     const result = await this.exec(machineId, wrappedCmd);
     const pid = parseInt(result.stdout.trim().split("\n").pop() ?? "", 10);
-    if (isNaN(pid)) {
+    if (isNaN(pid) || pid <= 0) {
       throw new Error(
         `Failed to get PID. stdout: ${result.stdout}, stderr: ${result.stderr}`,
       );

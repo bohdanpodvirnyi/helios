@@ -9,11 +9,12 @@ import type {
   Attachment,
 } from "../providers/types.js";
 import { AgentStateMachine } from "./state-machine.js";
-import { SessionStore } from "../store/session-store.js";
+import { SessionStore, isEphemeralSession } from "../store/session-store.js";
 import { savePreferences } from "../store/preferences.js";
 import type { ContextGate } from "../memory/context-gate.js";
 import type { StickyManager } from "./stickies.js";
 import { debugLog } from "../paths.js";
+import { formatError } from "../ui/format.js";
 
 export interface OrchestratorConfig {
   defaultProvider: "claude" | "openai";
@@ -29,6 +30,7 @@ export class Orchestrator {
   private tools: ToolDefinition[] = [];
   private _totalCostUsd = 0;
   private _lastInputTokens = 0;
+  private _sendLock = false;
   private _contextGate: ContextGate | null = null;
   private _stickyManager: StickyManager | null = null;
   readonly stateMachine = new AgentStateMachine();
@@ -47,11 +49,15 @@ export class Orchestrator {
   }
 
   registerTool(tool: ToolDefinition): void {
-    this.tools.push(tool);
+    if (!this.tools.some((t) => t.name === tool.name)) {
+      this.tools.push(tool);
+    }
   }
 
   registerTools(tools: ToolDefinition[]): void {
-    this.tools.push(...tools);
+    for (const tool of tools) {
+      this.registerTool(tool);
+    }
   }
 
   setContextGate(gate: ContextGate): void {
@@ -80,6 +86,9 @@ export class Orchestrator {
     if (!provider) throw new Error(`Provider "${name}" not registered`);
     debugLog("orchestrator", "switching provider", name);
 
+    // Capture the old session ID so we can carry context to the new provider
+    const previousSessionId = this._activeSession?.id;
+
     // Clean up old session before switching
     if (this._activeSession && this.activeProvider) {
       await this.activeProvider.closeSession(this._activeSession).catch(() => {});
@@ -91,6 +100,27 @@ export class Orchestrator {
 
     this.activeProvider = provider;
     savePreferences({ lastProvider: name });
+
+    // If there was an active session with messages, carry context to the new provider
+    if (previousSessionId) {
+      const hasMessages = this.sessionStore.hasMessages(previousSessionId);
+      if (hasMessages) {
+        try {
+          // Update the session's provider in the DB so resume works
+          this.sessionStore.updateProvider(previousSessionId, name);
+          const session = await provider.resumeSession(previousSessionId, this.config.systemPrompt);
+          this._activeSession = session;
+
+          if (this._contextGate) {
+            this._contextGate.onSessionStart(session.id);
+          }
+          debugLog("orchestrator", "context carried to new provider", previousSessionId);
+        } catch (err) {
+          debugLog("orchestrator", "failed to carry context", String(err));
+          // Fall through — next send() will create a fresh session
+        }
+      }
+    }
   }
 
   async ensureSession(): Promise<Session> {
@@ -138,6 +168,11 @@ export class Orchestrator {
     const session = await this.activeProvider!.resumeSession(stored.id, this.config.systemPrompt);
     this._activeSession = session;
 
+    // Bind memory store to the resumed session
+    if (this._contextGate) {
+      this._contextGate.onSessionStart(session.id);
+    }
+
     if (this.stateMachine.state === "idle") {
       this.stateMachine.transition("active", "Session resumed");
     }
@@ -146,63 +181,72 @@ export class Orchestrator {
   }
 
   async *send(message: string, attachments?: Attachment[]): AsyncGenerator<AgentEvent> {
-    if (!this.activeProvider) {
-      await this.switchProvider(this.config.defaultProvider);
+    if (this._sendLock) {
+      throw new Error("Another message is already being processed");
     }
-
-    const session = await this.ensureSession();
-    debugLog("orchestrator", "send", { provider: this.activeProvider!.name, model: this.activeProvider!.currentModel, session: session.id, messageLen: message.length });
-    this.sessionStore.updateLastActive(session.id);
-    this.sessionStore.addMessage(session.id, "user", message);
-
-    // Prepend sticky notes to the message so the model always sees them
-    let augmentedMessage = message;
-    if (this._stickyManager) {
-      const stickies = this._stickyManager.formatForModel();
-      if (stickies) {
-        augmentedMessage = stickies + "\n\n---\n\n" + message;
-      }
-    }
-
-    let fullResponse = "";
-
+    this._sendLock = true;
     try {
-      for await (const event of this.activeProvider!.send(
-        session,
-        augmentedMessage,
-        this.tools,
-        attachments,
-      )) {
-        if (event.type === "text" && event.delta) {
-          fullResponse += event.delta;
-        }
-
-        if (event.type === "done") {
-          debugLog("orchestrator", "done", event.usage ?? {});
-          if (event.usage) {
-            this.addCost(event.usage.costUsd ?? 0, event.usage.inputTokens, event.usage.outputTokens);
-          }
-          if (event.usage?.inputTokens) {
-            this._lastInputTokens = event.usage.inputTokens;
-          }
-        }
-
-        yield event;
+      if (!this.activeProvider) {
+        await this.switchProvider(this.config.defaultProvider);
       }
-    } catch (err) {
-      debugLog("orchestrator", "ERROR", { message: err instanceof Error ? err.message : String(err), stack: err instanceof Error ? err.stack : undefined });
-      throw err;
-    }
 
-    // Check if context window is filling up — trigger checkpoint if needed
-    yield* this.maybeCheckpoint(session);
+      const session = await this.ensureSession();
+      debugLog("orchestrator", "send", { provider: this.activeProvider!.name, model: this.activeProvider!.currentModel, session: session.id, messageLen: message.length });
+      this.sessionStore.updateLastActive(session.id);
+      this.sessionStore.addMessage(session.id, "user", message);
 
-    if (fullResponse) {
-      this.sessionStore.addMessage(
-        session.id,
-        "assistant",
-        fullResponse,
-      );
+      // Prepend sticky notes to the message so the model always sees them
+      let augmentedMessage = message;
+      if (this._stickyManager) {
+        const stickies = this._stickyManager.formatForModel();
+        if (stickies) {
+          augmentedMessage = stickies + "\n\n---\n\n" + message;
+        }
+      }
+
+      const responseParts: string[] = [];
+
+      try {
+        for await (const event of this.activeProvider!.send(
+          session,
+          augmentedMessage,
+          this.tools,
+          attachments,
+        )) {
+          if (event.type === "text" && event.delta) {
+            responseParts.push(event.delta);
+          }
+
+          if (event.type === "done") {
+            debugLog("orchestrator", "done", event.usage ?? {});
+            if (event.usage) {
+              this.addCost(event.usage.costUsd ?? 0, event.usage.inputTokens, event.usage.outputTokens);
+            }
+            if (event.usage?.inputTokens) {
+              this._lastInputTokens = event.usage.inputTokens;
+            }
+          }
+
+          yield event;
+        }
+      } catch (err) {
+        debugLog("orchestrator", "ERROR", formatError(err));
+        throw err;
+      }
+
+      // Check if context window is filling up — trigger checkpoint if needed
+      yield* this.maybeCheckpoint(session);
+
+      const fullResponse = responseParts.join("");
+      if (fullResponse) {
+        this.sessionStore.addMessage(
+          session.id,
+          "assistant",
+          fullResponse,
+        );
+      }
+    } finally {
+      this._sendLock = false;
     }
   }
 
@@ -222,6 +266,8 @@ export class Orchestrator {
       this._activeAbort.abort();
       this._activeAbort = null;
     }
+    // Release send lock so the next message isn't permanently blocked
+    this._sendLock = false;
   }
 
   get currentSession(): Session | null {
@@ -243,7 +289,7 @@ export class Orchestrator {
   /** Record cost from external sources (e.g. skill executor). */
   addCost(costUsd: number, inputTokens?: number, outputTokens?: number): void {
     this._totalCostUsd += costUsd;
-    if (this._activeSession) {
+    if (this._activeSession && !isEphemeralSession(this._activeSession)) {
       this.sessionStore.addCost(
         this._activeSession.id,
         costUsd,

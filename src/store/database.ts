@@ -6,6 +6,19 @@ import { HELIOS_DIR } from "../paths.js";
 
 const DB_PATH = join(HELIOS_DIR, "helios.db");
 
+/** Shared prepared-statement cache. Stores use composition to avoid re-preparing. */
+export class StmtCache {
+  private cache = new Map<string, Database.Statement>();
+  stmt(sql: string): Database.Statement {
+    let s = this.cache.get(sql);
+    if (!s) {
+      s = getDb().prepare(sql);
+      this.cache.set(sql, s);
+    }
+    return s;
+  }
+}
+
 let _db: Database.Database | null = null;
 
 export function getDb(): Database.Database {
@@ -27,7 +40,11 @@ export function closeDb(): void {
   }
 }
 
+let _dirCreated = false;
 export function getHeliosDir(): string {
-  mkdirSync(HELIOS_DIR, { recursive: true });
+  if (!_dirCreated) {
+    mkdirSync(HELIOS_DIR, { recursive: true });
+    _dirCreated = true;
+  }
   return HELIOS_DIR;
 }

@@ -1,5 +1,5 @@
 import { nanoid } from "nanoid";
-import { getDb } from "./database.js";
+import { StmtCache } from "./database.js";
 import type { Session } from "../providers/types.js";
 import { truncate } from "../ui/format.js";
 
@@ -26,14 +26,23 @@ export interface SessionSummary {
   outputTokens: number;
 }
 
+const EPHEMERAL_PREFIX = "eph-";
+
 /** Create an in-memory session that is NOT persisted to the database. */
 export function createEphemeralSession(providerId: string): Session {
   const now = Date.now();
-  return { id: `eph-${nanoid()}`, providerId, createdAt: now, lastActiveAt: now };
+  return { id: `${EPHEMERAL_PREFIX}${nanoid()}`, providerId, createdAt: now, lastActiveAt: now };
+}
+
+/** Check if a session is ephemeral (not persisted). */
+export function isEphemeralSession(session: Session): boolean {
+  return session.id.startsWith(EPHEMERAL_PREFIX);
 }
 
 export class SessionStore {
   private agentId: string;
+  private stmts = new StmtCache();
+  private stmt(sql: string) { return this.stmts.stmt(sql); }
 
   constructor(agentId = "") {
     this.agentId = agentId;
@@ -46,9 +55,8 @@ export class SessionStore {
   ): Session {
     const id = nanoid();
     const now = Date.now();
-    const db = getDb();
 
-    db.prepare(
+    this.stmt(
       `INSERT INTO sessions (id, provider, provider_session_id, model, status, created_at, last_active_at, agent_id)
        VALUES (?, ?, ?, ?, 'active', ?, ?, ?)`,
     ).run(id, provider, providerSessionId ?? null, model ?? null, now, now, this.agentId);
@@ -63,9 +71,7 @@ export class SessionStore {
   }
 
   getSession(id: string): Session | null {
-    const db = getDb();
-    const row = db
-      .prepare("SELECT * FROM sessions WHERE id = ?")
+    const row = this.stmt("SELECT * FROM sessions WHERE id = ?")
       .get(id) as Record<string, unknown> | undefined;
 
     if (!row) return null;
@@ -80,24 +86,28 @@ export class SessionStore {
   }
 
   updateProviderSessionId(sessionId: string, providerSessionId: string): void {
-    const db = getDb();
-    db.prepare("UPDATE sessions SET provider_session_id = ? WHERE id = ?").run(
+    this.stmt("UPDATE sessions SET provider_session_id = ? WHERE id = ?").run(
       providerSessionId,
       sessionId,
     );
   }
 
+  updateProvider(sessionId: string, provider: string): void {
+    this.stmt("UPDATE sessions SET provider = ?, provider_session_id = NULL WHERE id = ?").run(
+      provider,
+      sessionId,
+    );
+  }
+
   updateLastActive(sessionId: string): void {
-    const db = getDb();
-    db.prepare("UPDATE sessions SET last_active_at = ? WHERE id = ?").run(
+    this.stmt("UPDATE sessions SET last_active_at = ? WHERE id = ?").run(
       Date.now(),
       sessionId,
     );
   }
 
   addCost(sessionId: string, costUsd: number, inputTokens: number, outputTokens: number): void {
-    const db = getDb();
-    db.prepare(
+    this.stmt(
       `UPDATE sessions SET cost_usd = cost_usd + ?, input_tokens = input_tokens + ?, output_tokens = output_tokens + ? WHERE id = ?`,
     ).run(costUsd, inputTokens, outputTokens, sessionId);
   }
@@ -109,8 +119,7 @@ export class SessionStore {
     toolCalls?: string,
     tokenCount?: number,
   ): void {
-    const db = getDb();
-    db.prepare(
+    this.stmt(
       `INSERT INTO messages (session_id, role, content, tool_calls, token_count, timestamp)
        VALUES (?, ?, ?, ?, ?, ?)`,
     ).run(
@@ -123,10 +132,13 @@ export class SessionStore {
     );
   }
 
+  hasMessages(sessionId: string): boolean {
+    const row = this.stmt("SELECT 1 FROM messages WHERE session_id = ? LIMIT 1").get(sessionId);
+    return row !== undefined;
+  }
+
   getMessages(sessionId: string, limit = 100): StoredMessage[] {
-    const db = getDb();
-    const rows = db
-      .prepare(
+    const rows = this.stmt(
         `SELECT * FROM messages WHERE session_id = ? ORDER BY timestamp ASC LIMIT ?`,
       )
       .all(sessionId, limit) as Record<string, unknown>[];
@@ -143,9 +155,7 @@ export class SessionStore {
   }
 
   listSessions(limit = 20): Session[] {
-    const db = getDb();
-    const rows = db
-      .prepare(
+    const rows = this.stmt(
         `SELECT * FROM sessions s
          WHERE s.agent_id = ?
            AND EXISTS (SELECT 1 FROM messages m WHERE m.session_id = s.id)
@@ -163,9 +173,7 @@ export class SessionStore {
   }
 
   listSessionSummaries(limit = 20): SessionSummary[] {
-    const db = getDb();
-    const rows = db
-      .prepare(
+    const rows = this.stmt(
         `SELECT
            s.id,
            s.provider,

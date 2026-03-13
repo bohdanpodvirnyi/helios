@@ -16,7 +16,7 @@ export class TokenStore {
 
   constructor() {
     const dir = join(getHeliosDir(), "auth");
-    mkdirSync(dir, { recursive: true });
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
     this.filePath = join(dir, AUTH_FILE);
     this.data = this.load();
   }
@@ -31,7 +31,7 @@ export class TokenStore {
   }
 
   private save(): void {
-    writeFileSync(this.filePath, JSON.stringify(this.data, null, 2));
+    writeFileSync(this.filePath, JSON.stringify(this.data, null, 2), { mode: 0o600 });
   }
 
   get(provider: "claude" | "openai"): AuthCredentials | null {

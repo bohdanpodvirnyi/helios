@@ -1,5 +1,6 @@
 import type { FileCondition } from "./types.js";
 import type { ConnectionPool } from "../../remote/connection-pool.js";
+import { shellQuote } from "../../ui/format.js";
 
 // Track file sizes for stability detection
 const fileSizeHistory = new Map<string, { size: number; since: number }>();
@@ -12,7 +13,7 @@ export async function evaluateFile(
     case "exists": {
       const result = await pool.exec(
         condition.machineId,
-        `test -e ${condition.path} && echo "exists" || echo "missing"`,
+        `test -e ${shellQuote(condition.path)} && echo "exists" || echo "missing"`,
       );
       return result.stdout.trim() === "exists";
     }
@@ -20,7 +21,7 @@ export async function evaluateFile(
     case "modified": {
       const result = await pool.exec(
         condition.machineId,
-        `stat -c %Y ${condition.path} 2>/dev/null || stat -f %m ${condition.path} 2>/dev/null`,
+        `stat -c %Y ${shellQuote(condition.path)} 2>/dev/null || stat -f %m ${shellQuote(condition.path)} 2>/dev/null`,
       );
       if (result.exitCode !== 0) return false;
       const mtime = parseInt(result.stdout.trim(), 10);
@@ -36,7 +37,7 @@ export async function evaluateFile(
     case "size_stable": {
       const result = await pool.exec(
         condition.machineId,
-        `stat -c %s ${condition.path} 2>/dev/null || stat -f %z ${condition.path} 2>/dev/null`,
+        `stat -c %s ${shellQuote(condition.path)} 2>/dev/null || stat -f %z ${shellQuote(condition.path)} 2>/dev/null`,
       );
       if (result.exitCode !== 0) return false;
       const size = parseInt(result.stdout.trim(), 10);
@@ -44,7 +45,14 @@ export async function evaluateFile(
       const prev = fileSizeHistory.get(key);
 
       if (!prev || prev.size !== size) {
+        // Delete-and-reinsert to keep this key at the end (LRU order)
+        fileSizeHistory.delete(key);
         fileSizeHistory.set(key, { size, since: Date.now() });
+        // Cap history to prevent unbounded growth — evicts least-recently-used
+        if (fileSizeHistory.size > 100) {
+          const oldest = fileSizeHistory.keys().next().value;
+          if (oldest) fileSizeHistory.delete(oldest);
+        }
         return false;
       }
 

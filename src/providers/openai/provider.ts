@@ -12,7 +12,7 @@ import {
 } from "../types.js";
 import type { AuthManager } from "../auth/auth-manager.js";
 import { TransientError, isTransient, sleep } from "../retry.js";
-import { formatError } from "../../ui/format.js";
+import { formatError, withTimeout } from "../../ui/format.js";
 import { WEB_SEARCH_TOOL, debugLog } from "../../paths.js";
 import { parseSSELines } from "../sse.js";
 import { SessionStore, createEphemeralSession } from "../../store/session-store.js";
@@ -63,6 +63,7 @@ export class OpenAIProvider implements ModelProvider {
   private abortController: AbortController | null = null;
   private instructions = new Map<string, string>();
   private conversationHistory = new Map<string, ResponseItem[]>();
+  private lastStrippedIndex = new Map<string, number>();
 
   constructor(authManager: AuthManager, sessionStore?: SessionStore) {
     this.authManager = authManager;
@@ -279,7 +280,7 @@ export class OpenAIProvider implements ModelProvider {
             isError = true;
           } else {
             try {
-              toolResult = await tool.execute(tc.args);
+              toolResult = await withTimeout(tool.execute(tc.args), 300_000, tc.name);
             } catch (err) {
               toolResult = `Error: ${formatError(err)}`;
               isError = true;
@@ -332,13 +333,15 @@ export class OpenAIProvider implements ModelProvider {
     }
 
     // Strip base64 data from attachment blocks so they aren't re-sent on every turn
-    this.stripAttachmentData(history);
+    this.stripAttachmentData(session.id, history);
     this.conversationHistory.set(session.id, history);
   }
 
-  /** Remove attachment content blocks from history so they aren't re-sent to the API. */
-  private stripAttachmentData(history: ResponseItem[]): void {
-    for (const item of history) {
+  /** Remove attachment content blocks from history so they aren't re-sent to the API. Only processes new entries. */
+  private stripAttachmentData(sessionId: string, history: ResponseItem[]): void {
+    const start = this.lastStrippedIndex.get(sessionId) ?? 0;
+    for (let i = start; i < history.length; i++) {
+      const item = history[i];
       if (item.type !== "message" || !Array.isArray(item.content)) continue;
       item.content = item.content.map((block) => {
         if (block.type === "input_image" && block.image_url.length > 200) {
@@ -350,6 +353,7 @@ export class OpenAIProvider implements ModelProvider {
         return block;
       });
     }
+    this.lastStrippedIndex.set(sessionId, history.length);
   }
 
   resetHistory(session: Session, briefingMessage: string): void {
@@ -377,6 +381,7 @@ export class OpenAIProvider implements ModelProvider {
 
   async closeSession(session: Session): Promise<void> {
     this.conversationHistory.delete(session.id);
+    this.lastStrippedIndex.delete(session.id);
     this.instructions.delete(session.id);
   }
 
@@ -451,7 +456,7 @@ export class OpenAIProvider implements ModelProvider {
   // ─── SSE stream parser ──────────────────────────────
 
   private async *parseSSEStream(resp: Response): AsyncGenerator<StreamEvent> {
-    let text = "";
+    const textParts: string[] = [];
     const toolCalls: Array<{ call_id: string; name: string; args: Record<string, unknown> }> = [];
     const serverToolIds: string[] = [];
     const responseItems: ResponseItem[] = [];
@@ -461,7 +466,7 @@ export class OpenAIProvider implements ModelProvider {
       switch (evt.type) {
         case "response.output_text.delta": {
           if (evt.delta) {
-            text += evt.delta as string;
+            textParts.push(evt.delta as string);
             yield { kind: "delta", text: evt.delta as string };
           }
           break;
@@ -528,6 +533,7 @@ export class OpenAIProvider implements ModelProvider {
     }
 
     // If we accumulated text but no assistant message item, create one for history
+    const text = textParts.join("");
     if (text && !responseItems.some((i) => i.type === "message")) {
       responseItems.push({
         type: "message",

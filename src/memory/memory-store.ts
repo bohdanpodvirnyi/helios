@@ -1,4 +1,4 @@
-import { getDb } from "../store/database.js";
+import { StmtCache } from "../store/database.js";
 
 export interface MemoryNode {
   path: string;
@@ -11,6 +11,8 @@ export interface MemoryNode {
 
 export class MemoryStore {
   private sessionId: string;
+  private stmts = new StmtCache();
+  private stmt(sql: string) { return this.stmts.stmt(sql); }
 
   constructor(sessionId: string) {
     this.sessionId = sessionId;
@@ -22,14 +24,12 @@ export class MemoryStore {
 
   /** List children of a directory path. */
   ls(dirPath = "/"): MemoryNode[] {
-    const normalized = normalizeDirPath(dirPath);
-    const db = getDb();
+    const normalized = normalizeDirPath(validatePath(dirPath));
     const prefixLen = normalized.length;
 
     // Fetch all descendants, filter to direct children in JS (simple and correct)
     // Only fetches gist-level columns to keep it lightweight (no content)
-    const rows = db
-      .prepare(
+    const rows = this.stmt(
         `SELECT path, gist, is_dir, created_at, updated_at
          FROM memory_nodes
          WHERE session_id = ? AND path LIKE ? AND path != ?`,
@@ -46,11 +46,9 @@ export class MemoryStore {
 
   /** Recursively list all nodes under a path, returning paths + gists only. */
   tree(dirPath = "/"): Array<{ path: string; gist: string; isDir: boolean }> {
-    const normalized = normalizeDirPath(dirPath);
-    const db = getDb();
+    const normalized = normalizeDirPath(validatePath(dirPath));
 
-    const rows = db
-      .prepare(
+    const rows = this.stmt(
         `SELECT path, gist, is_dir
          FROM memory_nodes
          WHERE session_id = ? AND path LIKE ? AND path != ?
@@ -67,9 +65,8 @@ export class MemoryStore {
 
   /** Read a node's full content. */
   read(path: string): MemoryNode | null {
-    const db = getDb();
-    const row = db
-      .prepare(
+    path = validatePath(path);
+    const row = this.stmt(
         `SELECT path, gist, content, is_dir, created_at, updated_at
          FROM memory_nodes
          WHERE session_id = ? AND path = ?`,
@@ -81,14 +78,14 @@ export class MemoryStore {
 
   /** Write or update a node. Auto-creates parent directories. */
   write(path: string, gist: string, content?: string | null): void {
-    const db = getDb();
+    path = validatePath(path);
     const now = Date.now();
     const isDir = content === undefined || content === null;
 
     // Auto-create parent directories
     this.ensureParents(path);
 
-    db.prepare(
+    this.stmt(
       `INSERT INTO memory_nodes (session_id, path, gist, content, is_dir, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(session_id, path) DO UPDATE SET
@@ -101,11 +98,10 @@ export class MemoryStore {
 
   /** Remove a node and all children (if directory). */
   rm(path: string): number {
-    const db = getDb();
+    path = validatePath(path);
 
     // Delete exact match + any children
-    const result = db
-      .prepare(
+    const result = this.stmt(
         `DELETE FROM memory_nodes
          WHERE session_id = ? AND (path = ? OR path LIKE ?)`,
       )
@@ -116,18 +112,15 @@ export class MemoryStore {
 
   /** Check if a path exists. */
   exists(path: string): boolean {
-    const db = getDb();
-    const row = db
-      .prepare("SELECT 1 FROM memory_nodes WHERE session_id = ? AND path = ?")
+    path = validatePath(path);
+    const row = this.stmt("SELECT 1 FROM memory_nodes WHERE session_id = ? AND path = ?")
       .get(this.sessionId, path);
     return !!row;
   }
 
   /** Count all nodes for this session. */
   count(): number {
-    const db = getDb();
-    const row = db
-      .prepare("SELECT COUNT(*) as c FROM memory_nodes WHERE session_id = ?")
+    const row = this.stmt("SELECT COUNT(*) as c FROM memory_nodes WHERE session_id = ?")
       .get(this.sessionId) as { c: number };
     return row.c;
   }
@@ -150,25 +143,38 @@ export class MemoryStore {
 
   /** Clear all memory for this session. */
   clear(): void {
-    const db = getDb();
-    db.prepare("DELETE FROM memory_nodes WHERE session_id = ?").run(this.sessionId);
+    this.stmt("DELETE FROM memory_nodes WHERE session_id = ?").run(this.sessionId);
   }
 
   private ensureParents(path: string): void {
     const parts = path.split("/").filter(Boolean);
     if (parts.length <= 1) return;
-    const db = getDb();
     const now = Date.now();
-    const stmt = db.prepare(
+    const parentStmt = this.stmt(
       `INSERT OR IGNORE INTO memory_nodes (session_id, path, gist, content, is_dir, created_at, updated_at)
        VALUES (?, ?, ?, NULL, 1, ?, ?)`,
     );
     // For "/a/b/c", ensure "/a/" and "/a/b/" exist
     for (let i = 1; i < parts.length; i++) {
       const parentPath = "/" + parts.slice(0, i).join("/") + "/";
-      stmt.run(this.sessionId, parentPath, parts[i - 1], now, now);
+      parentStmt.run(this.sessionId, parentPath, parts[i - 1], now, now);
     }
   }
+}
+
+function validatePath(path: string): string {
+  if (!path.startsWith("/")) path = "/" + path;
+  // Collapse repeated slashes and resolve . and ..
+  const parts = path.split("/").filter(Boolean);
+  const resolved: string[] = [];
+  for (const part of parts) {
+    if (part === "..") {
+      resolved.pop();
+    } else if (part !== ".") {
+      resolved.push(part);
+    }
+  }
+  return "/" + resolved.join("/") + (path.endsWith("/") && resolved.length > 0 ? "/" : "");
 }
 
 function normalizeDirPath(path: string): string {

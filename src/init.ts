@@ -55,6 +55,8 @@ import { seedBundledSkills } from "./skills/loader.js";
 import { createExperimentBranchTools } from "./tools/experiment-branch.js";
 import { createEnvSnapshotTool } from "./tools/env-snapshot.js";
 import { createSweepTool } from "./tools/sweep.js";
+import { SubagentManager } from "./subagent/manager.js";
+import { createSubagentTools } from "./tools/subagent.js";
 import { findProjectConfig } from "./config/project.js";
 import { ResourceCollector } from "./metrics/resources.js";
 import { Notifier } from "./notifications/index.js";
@@ -230,6 +232,19 @@ Use **writeup** to generate a structured experiment report. Pass your notes (goa
 ## Consulting the Other Provider
 Use **consult** if you find yourself stuck. It sends a question to the other AI (Claude if you're OpenAI, OpenAI if you're Claude) and returns their response. Good for getting a second opinion on experiment design, debugging, or when you've exhausted your own ideas.
 
+## Subagents
+Spawn background subagents to parallelize work:
+- **subagent(task)** — launch a focused worker. Returns immediately with an ID.
+- **subagent_status(id?)** — check one or all subagents.
+- **subagent_result(id)** — read the final output.
+
+Subagents run autonomously with their own tool access and write results to /subagents/{id}/ in your memory tree. Use them for:
+- Parallel research (searching docs while analyzing logs)
+- Running multiple hypothesis tests simultaneously
+- Delegating analysis or data processing
+
+You can specify a model (cheaper models for simple tasks) and deny specific tools. Subagents can spawn their own subagents if needed.
+
 ## Approach
 - Think step-by-step about experiment design
 - Monitor for common issues: loss divergence, NaN, OOM, dead GPUs
@@ -269,6 +284,7 @@ export interface HeliosRuntime {
   resourceCollector: ResourceCollector;
   notifier: Notifier | null;
   experimentBrancher: ExperimentBrancher;
+  subagentManager: SubagentManager;
   skillRegistry: SkillRegistry;
   openaiOAuth: OpenAIOAuth;
   projectConfig: ReturnType<typeof findProjectConfig>;
@@ -425,6 +441,10 @@ export async function createRuntime(options: RuntimeOptions = {}): Promise<Helio
     createSweepTool(exec, connPool, metricCollector),
   ]);
 
+  // Subagents
+  const subagentMgr = new SubagentManager();
+  orch.registerTools(createSubagentTools(subagentMgr, orch, memoryStore));
+
   if (hubConfig) {
     const hubClient = new HubClient(hubConfig);
     orch.registerTools(createHubTools(hubClient, exec));
@@ -472,6 +492,7 @@ export async function createRuntime(options: RuntimeOptions = {}): Promise<Helio
     resourceCollector,
     notifier,
     experimentBrancher,
+    subagentManager: subagentMgr,
     skillRegistry,
     openaiOAuth,
     projectConfig,

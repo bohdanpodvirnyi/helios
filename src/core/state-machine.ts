@@ -50,6 +50,9 @@ export class AgentStateMachine {
 
     this._state = to;
     this._history.push(transition);
+    if (this._history.length > 200) {
+      this._history = this._history.slice(-100);
+    }
 
     for (const listener of this._listeners) {
       listener(to, transition);

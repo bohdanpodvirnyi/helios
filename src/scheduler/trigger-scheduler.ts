@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { formatError } from "../ui/format.js";
+import { formatError, toError } from "../ui/format.js";
 import type {
   Trigger,
   TriggerExpression,
@@ -82,54 +82,59 @@ export class TriggerScheduler extends EventEmitter {
   }
 
   private async evaluationCycle(): Promise<void> {
-    const now = Date.now();
+    try {
+      const now = Date.now();
 
-    for (const [id, session] of this.sessions) {
-      const trigger = session.trigger;
+      for (const [id, session] of this.sessions) {
+        const trigger = session.trigger;
 
-      // Check deadline
-      if (trigger.deadline && now >= trigger.deadline) {
-        trigger.status = "expired";
-        session.wakeReason = "deadline";
-        session.wokeAt = now;
-        this.sessions.delete(id);
-        this.emit("wake", session, "Deadline reached");
-        continue;
-      }
-
-      try {
-        const satisfied = await this.evaluate(
-          trigger.expression,
-          "root",
-          trigger,
-        );
-        trigger.lastEvaluatedAt = now;
-
-        if (satisfied) {
-          trigger.status = "satisfied";
-          trigger.satisfiedAt = now;
-          session.wakeReason = "trigger_satisfied";
+        // Check deadline
+        if (trigger.deadline && now >= trigger.deadline) {
+          trigger.status = "expired";
+          session.wakeReason = "deadline";
           session.wokeAt = now;
           this.sessions.delete(id);
-          this.emit("wake", session, this.describeTrigger(trigger));
+          this.emit("wake", session, "Deadline reached");
+          continue;
         }
 
-        this.emit("trigger-update", trigger);
-      } catch (err) {
-        trigger.lastError = formatError(err);
-        this.emit(
-          "error",
-          err instanceof Error ? err : new Error(String(err)),
-          trigger,
-        );
-      }
-    }
+        try {
+          const satisfied = await this.evaluate(
+            trigger.expression,
+            "root",
+            trigger,
+          );
+          trigger.lastEvaluatedAt = now;
 
-    if (this.sessions.size > 0) {
-      this.scheduleNextCycle();
-    } else if (this.evaluationTimer) {
-      clearTimeout(this.evaluationTimer);
-      this.evaluationTimer = null;
+          if (satisfied) {
+            trigger.status = "satisfied";
+            trigger.satisfiedAt = now;
+            session.wakeReason = "trigger_satisfied";
+            session.wokeAt = now;
+            this.sessions.delete(id);
+            this.emit("wake", session, this.describeTrigger(trigger));
+          }
+
+          this.emit("trigger-update", trigger);
+        } catch (err) {
+          trigger.lastError = formatError(err);
+          // Emit only if there's a listener — unhandled "error" events crash Node
+          if (this.listenerCount("error") > 0) {
+            this.emit("error", toError(err), trigger);
+          }
+        }
+      }
+    } catch (err) {
+      // Outer safety net — never let the evaluation loop die
+      process.stderr.write(`[helios] Trigger evaluation cycle error: ${formatError(err)}\n`);
+    } finally {
+      // Always reschedule if there are active sessions
+      if (this.sessions.size > 0) {
+        this.scheduleNextCycle();
+      } else if (this.evaluationTimer) {
+        clearTimeout(this.evaluationTimer);
+        this.evaluationTimer = null;
+      }
     }
   }
 
@@ -139,17 +144,21 @@ export class TriggerScheduler extends EventEmitter {
     trigger: Trigger,
   ): Promise<boolean> {
     if ("op" in expr) {
-      // Composite trigger
+      // Composite trigger — short-circuit to avoid unnecessary evaluations
       const children = expr.children ?? [];
       if (children.length === 0) return expr.op === "and";
-      const results = await Promise.all(
-        children.map((child, i) =>
-          this.evaluate(child, `${path}.${i}`, trigger),
-        ),
-      );
-      return expr.op === "and"
-        ? results.every(Boolean)
-        : results.some(Boolean);
+      if (expr.op === "or") {
+        for (let i = 0; i < children.length; i++) {
+          if (await this.evaluate(children[i], `${path}.${i}`, trigger)) return true;
+        }
+        return false;
+      } else {
+        // AND
+        for (let i = 0; i < children.length; i++) {
+          if (!(await this.evaluate(children[i], `${path}.${i}`, trigger))) return false;
+        }
+        return true;
+      }
     }
 
     // Check if already satisfied (latching for AND)

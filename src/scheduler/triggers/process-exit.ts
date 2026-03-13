@@ -1,5 +1,6 @@
 import type { ProcessExitCondition } from "./types.js";
 import type { ConnectionPool } from "../../remote/connection-pool.js";
+import { shellQuote } from "../../ui/format.js";
 
 export async function evaluateProcessExit(
   condition: ProcessExitCondition,
@@ -16,7 +17,7 @@ export async function evaluateProcessExit(
   if (condition.processPattern) {
     const result = await pool.exec(
       condition.machineId,
-      `pgrep -f "${condition.processPattern}" | head -1`,
+      `pgrep -f ${shellQuote(condition.processPattern)} | head -1`,
     );
     // If no process found, it has exited
     return result.stdout.trim() === "";

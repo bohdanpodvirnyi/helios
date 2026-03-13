@@ -1,6 +1,7 @@
 import { exec as execCb } from "node:child_process";
 import { promisify } from "node:util";
 import type { RemoteMachine } from "./types.js";
+import { shellQuote } from "../ui/format.js";
 
 const execAsync = promisify(execCb);
 
@@ -27,7 +28,7 @@ export class FileSync {
     const remote = `${machine.username}@${machine.host}:${remotePath}`;
 
     await execAsync(
-      `rsync -avz -e "ssh ${sshArgs}" ${localPath} ${remote}`,
+      `rsync -avz -e "ssh ${sshArgs}" ${shellQuote(localPath)} ${shellQuote(remote)}`,
     );
   }
 
@@ -44,7 +45,7 @@ export class FileSync {
     const remote = `${machine.username}@${machine.host}:${remotePath}`;
 
     await execAsync(
-      `rsync -avz -e "ssh ${sshArgs}" ${remote} ${localPath}`,
+      `rsync -avz -e "ssh ${sshArgs}" ${shellQuote(remote)} ${shellQuote(localPath)}`,
     );
   }
 
@@ -57,7 +58,7 @@ export class FileSync {
   private buildSshArgs(machine: RemoteMachine): string {
     const args: string[] = [`-p ${machine.port}`];
     if (machine.authMethod === "key" && machine.keyPath) {
-      args.push(`-i ${machine.keyPath}`);
+      args.push(`-i ${shellQuote(machine.keyPath)}`);
     }
     return args.join(" ");
   }

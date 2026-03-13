@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, memo } from "react";
 import { Box, Text } from "ink";
 import { C, G } from "../theme.js";
 import { formatDuration, truncate } from "../format.js";
@@ -16,7 +16,15 @@ interface StatusBarProps {
 
 const SLEEP_FRAMES = ["◇", "◆", "◇", "◇"];
 
-export function StatusBar({ orchestrator, sleepManager, monitorManager, isStreaming, streamingStartedAt }: StatusBarProps) {
+const STATE_COLOR: Record<string, string> = {
+  idle: C.dim,
+  active: C.primary,
+  sleeping: C.primary,
+  waiting: C.dim,
+  error: C.error,
+};
+
+export const StatusBar = memo(function StatusBar({ orchestrator, sleepManager, monitorManager, isStreaming, streamingStartedAt }: StatusBarProps) {
   const state = orchestrator.currentState;
   const provider = orchestrator.currentProvider;
   const model = orchestrator.currentModel;
@@ -54,13 +62,7 @@ export function StatusBar({ orchestrator, sleepManager, monitorManager, isStream
     return () => clearInterval(timer);
   }, [isStreaming, streamingStartedAt]);
 
-  const stateColor = {
-    idle: C.dim,
-    active: C.primary,
-    sleeping: C.primary,
-    waiting: C.dim,
-    error: C.error,
-  }[state] ?? C.dim;
+  const stateColor = STATE_COLOR[state] ?? C.dim;
 
   return (
     <Box paddingX={1}>
@@ -137,4 +139,4 @@ export function StatusBar({ orchestrator, sleepManager, monitorManager, isStream
       )}
     </Box>
   );
-}
+});

@@ -1,5 +1,6 @@
 import type { ResourceCondition } from "./types.js";
 import type { ConnectionPool } from "../../remote/connection-pool.js";
+import { compareValue } from "./metric.js";
 
 export async function evaluateResource(
   condition: ResourceCondition,
@@ -7,17 +8,7 @@ export async function evaluateResource(
 ): Promise<boolean> {
   const value = await fetchResourceValue(condition, pool);
   if (value === null) return false;
-
-  switch (condition.comparator) {
-    case "<":
-      return value < condition.threshold;
-    case ">":
-      return value > condition.threshold;
-    case "<=":
-      return value <= condition.threshold;
-    case ">=":
-      return value >= condition.threshold;
-  }
+  return compareValue(value, condition.comparator, condition.threshold);
 }
 
 async function fetchResourceValue(

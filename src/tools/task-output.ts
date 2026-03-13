@@ -1,6 +1,7 @@
 import type { ToolDefinition } from "../providers/types.js";
 import type { RemoteExecutor } from "../remote/executor.js";
 import type { ConnectionPool } from "../remote/connection-pool.js";
+import { shellQuote, splitAtSentinel } from "../ui/format.js";
 
 export function createTaskOutputTool(
   executor: RemoteExecutor,
@@ -47,8 +48,21 @@ export function createTaskOutputTool(
         });
       }
 
-      const output = await pool.tailFile(machineId, proc.logPath, lines);
-      const running = await executor.isRunning(machineId, pid);
+      // Combine tail + process check into a single SSH call
+      const result = await pool.exec(
+        machineId,
+        `{ tail -n ${lines} ${shellQuote(proc.logPath)}; echo '---HELIOS_SEP---'; kill -0 ${pid} 2>/dev/null && echo 'running' || echo 'stopped'; }`,
+      );
+
+      const split = splitAtSentinel(result.stdout, '---HELIOS_SEP---');
+      let output: string;
+      let running = false;
+      if (split) {
+        output = split.before;
+        running = split.after === 'running';
+      } else {
+        output = result.stdout;
+      }
 
       return JSON.stringify({
         pid,

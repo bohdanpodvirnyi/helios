@@ -11,8 +11,8 @@ import type {
 import { execSync } from "node:child_process";
 import { z } from "zod";
 import { TransientError, isTransient, sleep } from "../retry.js";
-import { formatError } from "../../ui/format.js";
-import { WEB_SEARCH_TOOL, debugLog } from "../../paths.js";
+import { formatError, withTimeout } from "../../ui/format.js";
+import { WEB_SEARCH_TOOL, debugLog, isDebug } from "../../paths.js";
 import {
   CHECKPOINT_ACK,
   type ModelProvider,
@@ -87,10 +87,12 @@ export class ClaudeProvider implements ModelProvider {
   private abortController: AbortController | null = null;
   private sdkSessionIds = new Map<string, string>();
   private conversationHistory = new Map<string, AnthropicMessage[]>();
+  private lastStrippedIndex = new Map<string, number>();
   private systemPrompts = new Map<string, string>();
   // CLI mode: correlate MCP tool executions back to tool_use IDs for UI updates
   // Keyed by original tool name → queue of call IDs (per-tool FIFO, not global FIFO)
   private cliPendingByName = new Map<string, string[]>();
+  private cachedMcpServer: { key: string; server: ReturnType<typeof createSdkMcpServer> } | null = null;
   private cliToolResults: Array<{ callId: string; result: string; isError?: boolean }> = [];
 
   constructor(authManager: AuthManager, preferredMode?: "cli" | "api", sessionStore?: SessionStore) {
@@ -241,6 +243,7 @@ export class ClaudeProvider implements ModelProvider {
     }
     this.sdkSessionIds.delete(session.id);
     this.conversationHistory.delete(session.id);
+    this.lastStrippedIndex.delete(session.id);
     this.systemPrompts.delete(session.id);
   }
 
@@ -307,10 +310,12 @@ export class ClaudeProvider implements ModelProvider {
 
     try {
       for await (const msg of q) {
-        if (msg.type === "result" || msg.type === "system") {
-          debugLog("claude-sdk", "message", msg);
-        } else {
-          debugLog("claude-sdk", "message", { type: msg.type, ...("subtype" in msg ? { subtype: msg.subtype } : {}) });
+        if (isDebug()) {
+          if (msg.type === "result" || msg.type === "system") {
+            debugLog("claude-sdk", "message", msg);
+          } else {
+            debugLog("claude-sdk", "message", { type: msg.type, ...("subtype" in msg ? { subtype: msg.subtype } : {}) });
+          }
         }
 
         if (
@@ -454,7 +459,7 @@ export class ClaudeProvider implements ModelProvider {
             isError = true;
           } else {
             try {
-              result = await tool.execute(tc.args);
+              result = await withTimeout(tool.execute(tc.args), 300_000, tc.name);
             } catch (err) {
               result = `Error: ${formatError(err)}`;
               isError = true;
@@ -507,13 +512,15 @@ export class ClaudeProvider implements ModelProvider {
     }
 
     // Strip base64 data from attachment blocks so they aren't re-sent on every turn
-    this.stripAttachmentData(history);
+    this.stripAttachmentData(session.id, history);
     this.conversationHistory.set(session.id, history);
   }
 
-  /** Remove attachment content blocks from history so they aren't re-sent to the API. */
-  private stripAttachmentData(history: AnthropicMessage[]): void {
-    for (const msg of history) {
+  /** Remove attachment content blocks from history so they aren't re-sent to the API. Only processes new entries. */
+  private stripAttachmentData(sessionId: string, history: AnthropicMessage[]): void {
+    const start = this.lastStrippedIndex.get(sessionId) ?? 0;
+    for (let i = start; i < history.length; i++) {
+      const msg = history[i];
       if (!Array.isArray(msg.content)) continue;
       msg.content = msg.content.map((block) => {
         if (
@@ -523,7 +530,6 @@ export class ClaudeProvider implements ModelProvider {
         ) {
           return { type: "text" as const, text: `[${block.type} attachment stripped]` } as unknown as typeof block;
         }
-        // Strip multimodal content inside tool_result blocks
         if (block.type === "tool_result" && Array.isArray(block.content)) {
           block.content = block.content.map((inner) => {
             if (
@@ -539,6 +545,7 @@ export class ClaudeProvider implements ModelProvider {
         return block;
       });
     }
+    this.lastStrippedIndex.set(sessionId, history.length);
   }
 
   /** Parse a multimodal tool result payload. */
@@ -628,7 +635,7 @@ export class ClaudeProvider implements ModelProvider {
       throw new Error(`Anthropic API error: ${status} ${errText}`);
     }
 
-    let fullText = "";
+    const textParts: string[] = [];
     const toolCalls: Array<{ id: string; name: string; args: Record<string, unknown> }> = [];
     const serverToolCalls: Array<{ id: string; name: string; args: Record<string, unknown> }> = [];
     let usage: { input: number; output: number } | undefined;
@@ -687,7 +694,7 @@ export class ClaudeProvider implements ModelProvider {
           const block = blocks.get(idx);
 
           if (delta?.type === "text_delta" && delta.text) {
-            fullText += delta.text as string;
+            textParts.push(delta.text as string);
             yield { kind: "delta", text: delta.text as string };
           }
 
@@ -745,7 +752,7 @@ export class ClaudeProvider implements ModelProvider {
       }
     }
 
-    yield { kind: "complete", text: fullText, toolCalls, serverToolCalls, usage };
+    yield { kind: "complete", text: textParts.join(""), toolCalls, serverToolCalls, usage };
   }
 
   // ========== Utilities ==========
@@ -769,8 +776,14 @@ export class ClaudeProvider implements ModelProvider {
   }
 
   private buildMcpServer(tools: ToolDefinition[]) {
-    // Filter out web_search marker — handled natively by the provider, not as an MCP tool
-    const mcpTools = tools.filter((t) => t.name !== WEB_SEARCH_TOOL).map((t) =>
+    // Filter once, reuse for both cache key and building
+    const filtered = tools.filter((t) => t.name !== WEB_SEARCH_TOOL);
+    const key = filtered.map((t) => t.name).sort().join(",");
+    if (this.cachedMcpServer && this.cachedMcpServer.key === key) {
+      return this.cachedMcpServer.server;
+    }
+
+    const mcpTools = filtered.map((t) =>
       sdkTool(
         t.name,
         t.description,
@@ -799,7 +812,9 @@ export class ClaudeProvider implements ModelProvider {
       ),
     );
 
-    return createSdkMcpServer({ name: "helios-tools", tools: mcpTools });
+    const server = createSdkMcpServer({ name: "helios-tools", tools: mcpTools });
+    this.cachedMcpServer = { key, server };
+    return server;
   }
 
   private buildZodSchema(

@@ -20,4 +20,7 @@ export interface TaskInfo {
   machineId: string;
   pid?: number;
   startedAt: number;
+  type?: "process" | "subagent";
+  /** Per-subagent cost in USD (only for type=subagent). */
+  costUsd?: number;
 }

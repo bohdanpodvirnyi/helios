@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo, memo } from "react";
 import { Box, Text, useInput, useApp, measureElement } from "ink";
 import type { EventEmitter } from "node:events";
 import { useScreenSize } from "fullscreen-ink";
@@ -34,11 +34,28 @@ interface LayoutProps {
 
 let messageIdCounter = 0;
 
+function MessageList({ messages, isStreaming }: { messages: Message[]; isStreaming: boolean }) {
+  return (
+    <>
+      {messages.map((msg) => (
+        <Box key={msg.id} paddingX={1}>
+          <MessageLine message={msg} />
+        </Box>
+      ))}
+      {isStreaming && (
+        <Box paddingX={1} paddingLeft={3}>
+          <PulsingIndicator />
+        </Box>
+      )}
+    </>
+  );
+}
+
 export function Layout({ runtime, mouseEmitter, headless, initialPrompt, initialAttachments }: LayoutProps) {
   const {
     orchestrator, sleepManager, connectionPool, executor,
     metricStore, metricCollector, monitorManager, experimentTracker,
-    memoryStore, stickyManager, agentName,
+    memoryStore, stickyManager, agentName, subagentManager,
   } = runtime;
   const { exit } = useApp();
   const [messages, setMessages] = useState<Message[]>(() => {
@@ -64,6 +81,11 @@ export function Layout({ runtime, mouseEmitter, headless, initialPrompt, initial
   const [activeOverlay, setActiveOverlay] = useState<"none" | "tasks" | "metrics">("none");
   const [resourceData, setResourceData] = useState<Map<string, import("../metrics/resources.js").MachineResources>>(new Map());
   const [updateAvailable, setUpdateAvailable] = useState<string | null>(null);
+
+  // Refs for skipping unchanged polling state updates
+  const lastTaskIdsRef = useRef("");
+  const lastMetricKeyRef = useRef("");
+  const lastResourceKeyRef = useRef("");
 
   // Check for updates on mount (non-blocking)
   useEffect(() => {
@@ -99,7 +121,26 @@ export function Layout({ runtime, mouseEmitter, headless, initialPrompt, initial
           didCollect = true;
         }
 
-        setTasks(updated);
+        // Merge subagent entries into task list
+        if (subagentManager) {
+          for (const sa of subagentManager.listAll()) {
+            updated.push({
+              id: `sa:${sa.id}`,
+              name: truncate(sa.task, 40),
+              status: sa.status === "cancelled" ? "failed" : sa.status,
+              machineId: sa.model,
+              startedAt: sa.createdAt,
+              type: "subagent",
+              costUsd: sa.costUsd,
+            });
+          }
+        }
+
+        const newTaskIds = updated.map(t => `${t.id}:${t.status}:${t.costUsd ?? ""}`).join(",");
+        if (newTaskIds !== lastTaskIdsRef.current) {
+          lastTaskIdsRef.current = newTaskIds;
+          setTasks(updated);
+        }
       }
 
       // Collect metrics from all sources (skip if we already collected for finished tasks above)
@@ -107,13 +148,22 @@ export function Layout({ runtime, mouseEmitter, headless, initialPrompt, initial
         if (!didCollect) {
           await metricCollector.collectAll().catch(() => {});
         }
-        setMetricData(metricStore.getAllSeries(50));
+        const newMetrics = metricStore.getAllSeries(50);
+        const newMetricKey = Array.from(newMetrics.entries()).map(([k, v]) => `${k}:${v.length}:${v.length > 0 ? v[v.length - 1] : ""}`).join(",");
+        if (newMetricKey !== lastMetricKeyRef.current) {
+          lastMetricKeyRef.current = newMetricKey;
+          setMetricData(newMetrics);
+        }
       }
 
       // Collect resource usage from connected machines
       if (runtime.resourceCollector) {
-        const res = await runtime.resourceCollector.collectAll().catch(() => new Map());
-        setResourceData(res as Map<string, import("../metrics/resources.js").MachineResources>);
+        const res = await runtime.resourceCollector.collectAll().catch(() => new Map()) as Map<string, import("../metrics/resources.js").MachineResources>;
+        const newResKey = Array.from(res.entries()).map(([k, v]) => `${k}:${v.cpuPercent}:${v.memoryUsed}`).join(",");
+        if (newResKey !== lastResourceKeyRef.current) {
+          lastResourceKeyRef.current = newResKey;
+          setResourceData(res);
+        }
       }
     };
 
@@ -384,6 +434,23 @@ export function Layout({ runtime, mouseEmitter, headless, initialPrompt, initial
     return () => { runtime.openaiOAuth.onAuthUrl = null; };
   }, [runtime.openaiOAuth]);
 
+  // Subagent completion/failure events → inject system messages
+  useEffect(() => {
+    if (!subagentManager) return;
+    const onDone = (info: { id: string; task: string }) => {
+      addMessageRef.current("system", `[Subagent ${info.id} completed — result at /subagents/${info.id}/result]`);
+    };
+    const onFail = (info: { id: string; error?: string }) => {
+      addMessageRef.current("system", `[Subagent ${info.id} failed${info.error ? `: ${truncate(info.error, 80)}` : ""}]`);
+    };
+    subagentManager.on("completed", onDone);
+    subagentManager.on("failed", onFail);
+    return () => {
+      subagentManager.removeListener("completed", onDone);
+      subagentManager.removeListener("failed", onFail);
+    };
+  }, [subagentManager]);
+
   useEffect(() => {
     const onWake = (_session: unknown, _reason: string, wakeMessage: string) => {
       if (isStreamingRef.current) return;
@@ -414,6 +481,7 @@ export function Layout({ runtime, mouseEmitter, headless, initialPrompt, initial
   const metricsRows = metricData.size > 0 ? metricData.size : 1;
   const tasksRows = tasks.length > 0 ? Math.min(tasks.length, 5) : 1;
   const panelHeight = Math.max(metricsRows, tasksRows);
+  const verticalSeparator = useMemo(() => Array.from({ length: panelHeight }, () => "│").join("\n"), [panelHeight]);
 
   const { height, width } = useScreenSize();
 
@@ -463,7 +531,7 @@ export function Layout({ runtime, mouseEmitter, headless, initialPrompt, initial
           </Box>
           <Box width={1} flexDirection="column" alignItems="center">
             <Text color={C.primary} wrap="truncate">
-              {Array.from({ length: panelHeight }, () => "│").join("\n")}
+              {verticalSeparator}
             </Text>
           </Box>
           <Box flexGrow={1} flexBasis={0} flexDirection="column" paddingX={1}>
@@ -505,16 +573,7 @@ export function Layout({ runtime, mouseEmitter, headless, initialPrompt, initial
                   flexShrink={0}
                   marginBottom={scrollUp > 0 ? -scrollUp : undefined}
                 >
-                  {messages.map((msg) => (
-                    <Box key={msg.id} paddingX={1}>
-                      <MessageLine message={msg} />
-                    </Box>
-                  ))}
-                  {isStreaming && (
-                    <Box paddingX={1} paddingLeft={3}>
-                      <PulsingIndicator />
-                    </Box>
-                  )}
+                  <MessageList messages={messages} isStreaming={isStreaming} />
                 </Box>
               </Box>
             )}
@@ -559,7 +618,7 @@ function HeadlessHeader({ agentName, width }: { agentName: string; width: number
 }
 
 /** Single header line: logo on the left, panel labels right-aligned in each half. */
-function HeaderWithPanels({ width }: { width: number }) {
+const HeaderWithPanels = memo(function HeaderWithPanels({ width }: { width: number }) {
   const logo = ` ▓▒░ ${G.brand} HELIOS ░▒▓ `;
   const ver = `${VERSION} `;
   const metricsLabel = ` ⣤⣸⣿ METRICS `;
@@ -581,12 +640,12 @@ function HeaderWithPanels({ width }: { width: number }) {
       <Text color={C.primary}>{G.rule}</Text>
     </Box>
   );
-}
+});
 
 const SHIMMER_INTERVAL = 80;
 const SHIMMER_PAUSE = 20; // extra frames of pause after sweep
 
-function ShimmerLogo({ text }: { text: string }) {
+const ShimmerLogo = memo(function ShimmerLogo({ text }: { text: string }) {
   const [frame, setFrame] = useState(0);
   const len = text.length;
   const cycleLen = len + 6 + SHIMMER_PAUSE; // 6 = shimmer tail width
@@ -627,5 +686,5 @@ function ShimmerLogo({ text }: { text: string }) {
       ))}
     </Text>
   );
-}
+});
 

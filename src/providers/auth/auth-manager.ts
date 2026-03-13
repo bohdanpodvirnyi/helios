@@ -3,6 +3,7 @@ import type { AuthCredentials, AuthMethod } from "../types.js";
 
 export class AuthManager {
   readonly tokenStore: TokenStore;
+  private refreshPromises = new Map<string, Promise<AuthCredentials>>();
   private refreshHandlers = new Map<
     string,
     (refreshToken: string) => Promise<{
@@ -43,7 +44,16 @@ export class AuthManager {
       this.tokenStore.needsRefresh(provider) &&
       creds.refreshToken
     ) {
-      return this.refresh(provider, creds);
+      // Deduplicate concurrent refresh attempts per provider
+      if (!this.refreshPromises.has(provider)) {
+        this.refreshPromises.set(
+          provider,
+          this.refresh(provider, creds).finally(() => {
+            this.refreshPromises.delete(provider);
+          }),
+        );
+      }
+      return this.refreshPromises.get(provider)!;
     }
 
     return creds;

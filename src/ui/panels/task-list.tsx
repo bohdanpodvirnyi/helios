@@ -20,17 +20,23 @@ export function TaskListPanel({ tasks = [], resources, width }: TaskListPanelPro
   return (
     <Box flexDirection="column" flexGrow={1}>
       {/* Running tasks */}
-      {hasTasks && tasks.slice(0, 3).map((task) => {
+      {hasTasks && tasks.slice(0, 5).map((task) => {
+        const isSubagent = task.type === "subagent";
         const name = task.name.length > nameWidth
           ? task.name.slice(0, nameWidth - 1) + "…"
           : task.name;
         return (
           <Box key={task.id} paddingLeft={1}>
             <Text color={statusColor(task.status)}>
-              {statusIcon(task.status)}{" "}
+              {isSubagent ? "⊕" : statusIcon(task.status)}{" "}
             </Text>
-            <Text color={C.dim}>{task.machineId} </Text>
+            <Text color={C.dim}>
+              {isSubagent ? task.machineId : task.machineId}{" "}
+            </Text>
             <Text color={C.text}>{name}</Text>
+            {isSubagent && task.costUsd != null && task.costUsd > 0 && (
+              <Text color={C.dim}> ${task.costUsd.toFixed(4)}</Text>
+            )}
           </Box>
         );
       })}
