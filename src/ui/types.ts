@@ -23,4 +23,10 @@ export interface TaskInfo {
   type?: "process" | "subagent";
   /** Per-subagent cost in USD (only for type=subagent). */
   costUsd?: number;
+  /** Current turn number (subagents only). */
+  turn?: number;
+  /** Last tool call name (subagents only, sign of life). */
+  lastToolCall?: string;
+  /** Rolling activity log (subagents only). */
+  log?: Array<{ timestamp: number; type: string; summary: string }>;
 }

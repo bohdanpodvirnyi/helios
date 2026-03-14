@@ -1,12 +1,21 @@
-import type { SubagentInfo, SubagentSpawnConfig } from "./types.js";
+import type { SubagentInfo, SubagentSpawnConfig, SubagentLogEntry } from "./types.js";
 import type { ToolDefinition, ModelProvider } from "../providers/types.js";
 import type { Orchestrator } from "../core/orchestrator.js";
 import type { MemoryStore } from "../memory/memory-store.js";
 import type { SubagentManager } from "./manager.js";
 import { ScopedMemoryStore } from "./scoped-memory.js";
 import { createMemoryTools } from "../tools/memory-tools.js";
-import { formatError } from "../ui/format.js";
+import { formatError, truncate } from "../ui/format.js";
 import { debugLog } from "../paths.js";
+
+const MAX_LOG_ENTRIES = 50;
+
+function appendLog(info: SubagentInfo, type: SubagentLogEntry["type"], summary: string): void {
+  info.log.push({ timestamp: Date.now(), type, summary });
+  if (info.log.length > MAX_LOG_ENTRIES) {
+    info.log = info.log.slice(-MAX_LOG_ENTRIES);
+  }
+}
 
 /** Tools that subagents should never have access to. */
 const ALWAYS_DENY = new Set(["sleep", "start_monitor", "stop_monitor"]);
@@ -162,6 +171,7 @@ export async function runSubagent(
     // We just drain events and track cost.
     for (let turn = 0; turn < maxTurns; turn++) {
       if (info.abortController.signal.aborted) break;
+      info.turn = turn;
 
       let turnText = "";
       let hadToolCalls = false;
@@ -176,6 +186,12 @@ export async function runSubagent(
         }
         if (event.type === "tool_call") {
           hadToolCalls = true;
+          info.lastToolCall = event.name;
+          appendLog(info, "tool_call", `${event.name}(${truncate(JSON.stringify(event.args), 80, true)})`);
+        }
+        if (event.type === "tool_result") {
+          const prefix = event.isError ? "ERROR: " : "";
+          appendLog(info, "tool_result", `${prefix}${truncate(event.result, 120, true)}`);
         }
         if (event.type === "done" && event.usage) {
           const cost = event.usage.costUsd ?? 0;
@@ -186,7 +202,10 @@ export async function runSubagent(
         }
       }
 
-      if (turnText) lastText = turnText;
+      if (turnText) {
+        lastText = turnText;
+        appendLog(info, "text", truncate(turnText, 120, true));
+      }
 
       // If the provider didn't make any tool calls, the agent is done
       if (!hadToolCalls) break;

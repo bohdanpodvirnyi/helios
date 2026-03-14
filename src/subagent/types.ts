@@ -1,5 +1,11 @@
 export type SubagentStatus = "running" | "completed" | "failed" | "cancelled";
 
+export interface SubagentLogEntry {
+  timestamp: number;
+  type: "tool_call" | "tool_result" | "text";
+  summary: string;
+}
+
 export interface SubagentInfo {
   id: string;
   parentSessionId: string;
@@ -17,6 +23,12 @@ export interface SubagentInfo {
   outputTokens: number;
   memoryPrefix: string;
   abortController: AbortController;
+  /** Current turn number (0-indexed). */
+  turn: number;
+  /** Last tool call name (sign of life). */
+  lastToolCall?: string;
+  /** Rolling log of recent activity (capped). */
+  log: SubagentLogEntry[];
 }
 
 export interface SubagentSpawnConfig {

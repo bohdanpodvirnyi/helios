@@ -49,6 +49,8 @@ export class SubagentManager extends EventEmitter {
       outputTokens: 0,
       memoryPrefix: `/subagents/${id}`,
       abortController: new AbortController(),
+      turn: 0,
+      log: [],
     };
 
     this.agents.set(id, info);

@@ -172,11 +172,14 @@ export function Layout({ runtime, mouseEmitter, headless, initialPrompt, initial
               startedAt: sa.createdAt,
               type: "subagent",
               costUsd: sa.costUsd,
+              turn: sa.turn,
+              lastToolCall: sa.lastToolCall,
+              log: sa.log,
             });
           }
         }
 
-        const newTaskIds = updated.map(t => `${t.id}:${t.status}:${t.costUsd ?? ""}`).join(",");
+        const newTaskIds = updated.map(t => `${t.id}:${t.status}:${t.costUsd ?? ""}:${t.turn ?? ""}:${t.lastToolCall ?? ""}`).join(",");
         if (newTaskIds !== lastTaskIdsRef.current) {
           lastTaskIdsRef.current = newTaskIds;
           setTasks(updated);

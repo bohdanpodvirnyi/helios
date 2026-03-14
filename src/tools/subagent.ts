@@ -13,9 +13,12 @@ function formatStatus(info: SubagentInfo) {
     model: info.model,
     provider: info.provider,
     depth: info.depth,
+    turn: info.turn,
+    last_tool: info.lastToolCall ?? null,
     elapsed_ms: (info.completedAt ?? Date.now()) - info.createdAt,
     elapsed: formatDuration((info.completedAt ?? Date.now()) - info.createdAt),
     cost_usd: info.costUsd,
+    recent_activity: info.log.slice(-5).map((e) => e.summary),
     ...(info.error ? { error: info.error } : {}),
   };
 }
@@ -39,7 +42,7 @@ The subagent gets its own agent session with tools and memory. It writes results
 | claude-sonnet-4-6 | claude | Balanced (default) | $3 / $15 |
 | claude-haiku-4-5 | claude | Fast & cheap | $1 / $5 |
 | gpt-5.4 | openai | Flagship reasoning + code | $2.50 / $15 |
-| gpt-5.3-codex | openai | Best coding specialist | $1.75 / $14 |
+| gpt-5.3-codex | openai | Medium tasks, coding | $1.75 / $14 |
 | gpt-5.1-codex-mini | openai | Budget / simple tasks | $0.25 / $2 |
 
 Default: inherits your current model. Use cheaper models (haiku, codex-mini) for simple retrieval/analysis.`,

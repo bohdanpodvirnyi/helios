@@ -2,7 +2,7 @@ import { Box, Text } from "ink";
 import { C, G } from "../theme.js";
 import { formatBytes, truncate } from "../format.js";
 import type { TaskInfo } from "../types.js";
-import type { MachineResources, GpuInfo } from "../../metrics/resources.js";
+import type { MachineResources } from "../../metrics/resources.js";
 
 interface TaskListPanelProps {
   tasks?: TaskInfo[];
@@ -13,27 +13,43 @@ interface TaskListPanelProps {
 export function TaskListPanel({ tasks = [], resources, width }: TaskListPanelProps) {
   const panelWidth = width ?? (Math.floor((process.stdout.columns || 80) * 0.4) - 4);
   const nameWidth = Math.max(10, panelWidth - 11);
-
   const hasResources = resources && resources.size > 0;
   const hasTasks = tasks.length > 0;
 
   return (
     <Box flexDirection="column" flexGrow={1}>
       {/* Running tasks */}
-      {hasTasks && tasks.slice(0, 5).map((task) => {
+      {hasTasks && tasks.slice(0, 8).map((task) => {
         const isSubagent = task.type === "subagent";
         const name = truncate(task.name, nameWidth);
         return (
-          <Box key={task.id} paddingLeft={1}>
-            <Text color={statusColor(task.status)}>
-              {isSubagent ? "⊕" : statusIcon(task.status)}{" "}
-            </Text>
-            <Text color={C.dim}>
-              {isSubagent ? task.machineId : task.machineId}{" "}
-            </Text>
-            <Text color={C.text}>{name}</Text>
-            {isSubagent && task.costUsd != null && task.costUsd > 0 && (
-              <Text color={C.dim}> ${task.costUsd.toFixed(4)}</Text>
+          <Box key={task.id} flexDirection="column">
+            <Box paddingLeft={1}>
+              <Text color={statusColor(task.status)}>
+                {isSubagent ? "⊕" : statusIcon(task.status)}{" "}
+              </Text>
+              <Text color={C.dim}>
+                {task.machineId}{" "}
+              </Text>
+              <Text color={C.text}>{name}</Text>
+              {isSubagent && (
+                <Text color={C.dim}>
+                  {task.turn != null ? ` t${task.turn}` : ""}
+                  {task.lastToolCall ? ` ${truncate(task.lastToolCall, 15)}` : ""}
+                  {task.costUsd != null && task.costUsd > 0 ? ` $${task.costUsd.toFixed(4)}` : ""}
+                </Text>
+              )}
+            </Box>
+            {/* Subagent log (last 8 entries) */}
+            {isSubagent && task.log && task.log.length > 0 && (
+              <Box flexDirection="column" paddingLeft={3}>
+                {task.log.slice(-8).map((entry, i) => (
+                  <Text key={i} color={C.dim} wrap="truncate">
+                    {entry.type === "tool_call" ? "→" : entry.type === "tool_result" ? "←" : "·"}{" "}
+                    {truncate(entry.summary, panelWidth - 6)}
+                  </Text>
+                ))}
+              </Box>
             )}
           </Box>
         );
