@@ -166,6 +166,10 @@ export class OpenAIProvider implements ModelProvider {
     if (!this.conversationHistory.has(id)) {
       const stored = this.sessionStore.getMessages(id, 500);
       const history: ResponseItem[] = [];
+      // Track emitted function_call IDs so we can validate function_call_output references
+      const emittedCallIds = new Set<string>();
+      // Track call IDs that still need a result (for synthetic error outputs)
+      const pendingCallIds = new Set<string>();
 
       for (const m of stored) {
         if (m.role === "user") {
@@ -191,6 +195,8 @@ export class OpenAIProvider implements ModelProvider {
                 arguments: JSON.stringify(tc.args),
                 call_id: tc.id,
               });
+              emittedCallIds.add(tc.id);
+              pendingCallIds.add(tc.id);
             }
           } else {
             history.push({
@@ -201,12 +207,27 @@ export class OpenAIProvider implements ModelProvider {
           }
         } else if (m.role === "tool") {
           const meta = parseToolResultMeta(m);
-          history.push({
-            type: "function_call_output",
-            call_id: meta.callId,
-            output: m.content,
-          });
+          // Only emit function_call_output if the matching function_call exists
+          if (emittedCallIds.has(meta.callId)) {
+            history.push({
+              type: "function_call_output",
+              call_id: meta.callId,
+              output: m.content,
+            });
+            pendingCallIds.delete(meta.callId);
+          }
+          // else: orphaned tool result (call wasn't stored) — skip it
         }
+      }
+
+      // Emit synthetic error outputs for function_calls that never got a result
+      // (crash during tool execution). OpenAI requires every function_call to have an output.
+      for (const callId of pendingCallIds) {
+        history.push({
+          type: "function_call_output",
+          call_id: callId,
+          output: "(session interrupted before tool completed)",
+        });
       }
 
       this.conversationHistory.set(id, history);

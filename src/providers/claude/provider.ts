@@ -190,6 +190,10 @@ export class ClaudeProvider implements ModelProvider {
     if (!this.conversationHistory.has(id)) {
       const stored = this.sessionStore.getMessages(id, 500);
       const history: AnthropicMessage[] = [];
+      // Track tool_use IDs that still need a tool_result
+      const pendingToolUseIds = new Set<string>();
+      // Track emitted tool_use IDs so we can skip orphaned tool_results
+      const emittedToolUseIds = new Set<string>();
 
       for (const m of stored) {
         if (m.role === "user") {
@@ -201,6 +205,8 @@ export class ClaudeProvider implements ModelProvider {
             if (m.content) content.push({ type: "text", text: m.content });
             for (const tc of tcs) {
               content.push({ type: "tool_use", id: tc.id, name: tc.name, input: tc.args });
+              pendingToolUseIds.add(tc.id);
+              emittedToolUseIds.add(tc.id);
             }
             history.push({ role: "assistant", content });
           } else {
@@ -208,6 +214,9 @@ export class ClaudeProvider implements ModelProvider {
           }
         } else if (m.role === "tool") {
           const meta = parseToolResultMeta(m);
+          // Only emit tool_result if the matching tool_use exists
+          if (!emittedToolUseIds.has(meta.callId)) continue;
+          pendingToolUseIds.delete(meta.callId);
           const toolResult: AnthropicContent = {
             type: "tool_result",
             tool_use_id: meta.callId,
@@ -220,6 +229,26 @@ export class ClaudeProvider implements ModelProvider {
           } else {
             history.push({ role: "user", content: [toolResult] });
           }
+        }
+      }
+
+      // Emit synthetic error results for tool_use blocks that never got a result
+      // (crash during tool execution). Anthropic requires every tool_use to have a tool_result.
+      if (pendingToolUseIds.size > 0) {
+        const syntheticResults: AnthropicContent[] = [];
+        for (const toolUseId of pendingToolUseIds) {
+          syntheticResults.push({
+            type: "tool_result",
+            tool_use_id: toolUseId,
+            content: "(session interrupted before tool completed)",
+            is_error: true,
+          });
+        }
+        const last = history[history.length - 1];
+        if (last?.role === "user" && Array.isArray(last.content)) {
+          (last.content as AnthropicContent[]).push(...syntheticResults);
+        } else {
+          history.push({ role: "user", content: syntheticResults });
         }
       }
 

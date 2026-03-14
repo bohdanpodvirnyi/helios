@@ -420,6 +420,8 @@ describe("OpenAIProvider — History Deep Edge Cases", () => {
       const session = await provider.createSession({});
       store.addMessage(session.id, "system", "Sys");
       store.addMessage(session.id, "user", "User msg");
+      // Assistant with a tool call, followed by its result
+      store.addMessage(session.id, "assistant", "", { toolCalls: JSON.stringify([{ id: "tc1", name: "test_tool", args: {} }]) });
       store.addMessage(session.id, "tool", "Tool msg", { toolCalls: JSON.stringify({ callId: "tc1", isError: false }) });
       store.addMessage(session.id, "assistant", "Asst msg");
 
@@ -427,11 +429,12 @@ describe("OpenAIProvider — History Deep Edge Cases", () => {
       await provider.resumeSession(session.id);
 
       const history = (provider as any).conversationHistory.get(session.id);
-      // system skipped, tool becomes function_call_output
-      expect(history).toHaveLength(3);
+      // system skipped; user + function_call + function_call_output + assistant
+      expect(history).toHaveLength(4);
       expect(history[0].type).toBe("message"); // user
-      expect(history[1].type).toBe("function_call_output"); // tool
-      expect(history[2].type).toBe("message"); // assistant
+      expect(history[1].type).toBe("function_call"); // tool call
+      expect(history[2].type).toBe("function_call_output"); // tool result
+      expect(history[3].type).toBe("message"); // assistant
     });
 
     it("resume then send includes full history in API request body", async () => {

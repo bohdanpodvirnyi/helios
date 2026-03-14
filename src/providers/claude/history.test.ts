@@ -545,6 +545,8 @@ describe("ClaudeProvider — History Deep Edge Cases", () => {
       const session = await provider.createSession({});
       store.addMessage(session.id, "system", "System msg");
       store.addMessage(session.id, "user", "User msg");
+      // Assistant with a tool call, followed by its result
+      store.addMessage(session.id, "assistant", "", { toolCalls: JSON.stringify([{ id: "tc1", name: "test_tool", args: {} }]) });
       store.addMessage(session.id, "tool", "Tool msg", { toolCalls: JSON.stringify({ callId: "tc1", isError: false }) });
       store.addMessage(session.id, "assistant", "Assistant msg");
 
@@ -552,11 +554,12 @@ describe("ClaudeProvider — History Deep Edge Cases", () => {
       await provider.resumeSession(session.id);
 
       const history = (provider as any).conversationHistory.get(session.id);
-      // system skipped, tool becomes user(tool_result)
-      expect(history).toHaveLength(3);
+      // system skipped; user + assistant(tool_use) + user(tool_result) + assistant
+      expect(history).toHaveLength(4);
       expect(history[0].role).toBe("user");
-      expect(history[1].role).toBe("user"); // tool_result in user message
-      expect(history[2].role).toBe("assistant");
+      expect(history[1].role).toBe("assistant"); // tool_use
+      expect(history[2].role).toBe("user"); // tool_result in user message
+      expect(history[3].role).toBe("assistant");
     });
 
     it("resume does not re-load if history already exists in memory", async () => {
