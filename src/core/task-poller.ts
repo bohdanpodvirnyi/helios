@@ -158,6 +158,14 @@ export function buildMonitorMessage(
     if (goal) {
       parts.push(`Stored goal: ${goal.gist}`);
     }
+    // Nudge memory writes if the model hasn't been using them
+    // Always nudge for /goal; only nudge for /best after experiments have had time to complete
+    const missing: string[] = [];
+    if (!goal) missing.push("/goal");
+    if (!best && elapsedMin >= 5) missing.push("/best");
+    if (missing.length > 0) {
+      parts.push(`\n⚠ Missing memory: ${missing.join(", ")} — write these NOW or they'll be lost at checkpoint.`);
+    }
   }
 
   return parts.join("\n");

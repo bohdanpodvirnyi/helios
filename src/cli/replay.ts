@@ -5,6 +5,7 @@
 import { Effect } from "effect";
 import { Command, Args, Options } from "@effect/cli";
 import { getAgentId } from "../paths.js";
+import { truncate } from "../ui/format.js";
 
 const sessionId = Args.text({ name: "session-id" }).pipe(
   Args.withDescription("Session ID to replay (use 'helios sessions' to find IDs)"),
@@ -67,9 +68,7 @@ export const replay = Command.make(
             break;
           case "tool":
             console.log(`\x1b[2m  ⚙ tool ${time}\x1b[0m`);
-            const preview = msg.content.length > 200
-              ? msg.content.slice(0, 200) + "..."
-              : msg.content;
+            const preview = truncate(msg.content, 200);
             console.log(`\x1b[2m    ${preview.split("\n").join("\n    ")}\x1b[0m`);
             break;
           case "system":

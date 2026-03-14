@@ -419,6 +419,10 @@ export class ClaudeProvider implements ModelProvider {
 
     const MAX_RETRIES = 3;
     let continueLoop = true;
+    // Accumulate token usage across all rounds of the tool-call loop
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+    let lastRoundInputTokens = 0;
     while (continueLoop) {
       continueLoop = false;
 
@@ -527,15 +531,31 @@ export class ClaudeProvider implements ModelProvider {
         }
 
         history.push({ role: "user", content: toolResults });
+        // Accumulate this round's usage — emitted as a total on the final done
+        if (usage) {
+          totalInputTokens += usage.input;
+          totalOutputTokens += usage.output;
+          lastRoundInputTokens = usage.input;
+        }
         continueLoop = true;
       } else {
         if (text) {
           history.push({ role: "assistant", content: text });
         }
+        // Accumulate the final round's usage
+        if (usage) {
+          totalInputTokens += usage.input;
+          totalOutputTokens += usage.output;
+          lastRoundInputTokens = usage.input;
+        }
         yield {
           type: "done",
-          usage: usage
-            ? { inputTokens: usage.input, outputTokens: usage.output }
+          usage: totalInputTokens > 0 || totalOutputTokens > 0
+            ? {
+                inputTokens: totalInputTokens,
+                outputTokens: totalOutputTokens,
+                contextTokens: lastRoundInputTokens,
+              }
             : undefined,
         };
       }

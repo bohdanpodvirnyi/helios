@@ -46,6 +46,21 @@ export function resolveProviderForModel(
 }
 
 /** Build the filtered tool set for a subagent. */
+/** Dynamically add subagent tools if depth allows (avoids circular require). */
+export async function addSubagentTools(
+  tools: ToolDefinition[],
+  depth: number,
+  maxDepth: number,
+  subagentManager: SubagentManager,
+  orchestrator: Orchestrator,
+  parentMemory: MemoryStore,
+): Promise<void> {
+  if (maxDepth === 0 || depth + 1 < maxDepth) {
+    const { createSubagentTools } = await import("../tools/subagent.js");
+    tools.push(...createSubagentTools(subagentManager, orchestrator, parentMemory));
+  }
+}
+
 function buildTools(
   allTools: ToolDefinition[],
   config: SubagentSpawnConfig,
@@ -68,13 +83,8 @@ function buildTools(
   tools = tools.filter((t) => !t.name.startsWith("memory_"));
   tools.push(...createMemoryTools(scopedMemory));
 
-  // Replace subagent tools — include if depth allows
+  // Replace subagent tools — include if depth allows (added dynamically via addSubagentTools)
   tools = tools.filter((t) => !t.name.startsWith("subagent"));
-  if (maxDepth === 0 || depth + 1 < maxDepth) {
-    // Lazy import to avoid circular dependency — the tool factories are lightweight
-    const { createSubagentTools } = require("../tools/subagent.js") as typeof import("../tools/subagent.js");
-    tools.push(...createSubagentTools(subagentManager, orchestrator, parentMemory));
-  }
 
   return tools;
 }
@@ -127,6 +137,16 @@ export async function runSubagent(
     ctx.allTools,
     config,
     scopedMemory,
+    ctx.depth,
+    ctx.subagentManager.maxDepth,
+    ctx.subagentManager,
+    ctx.orchestrator,
+    ctx.parentMemory,
+  );
+
+  // Dynamically add subagent tools if depth allows (async import avoids circular dep)
+  await addSubagentTools(
+    tools,
     ctx.depth,
     ctx.subagentManager.maxDepth,
     ctx.subagentManager,

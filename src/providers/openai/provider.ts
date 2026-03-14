@@ -246,6 +246,9 @@ export class OpenAIProvider implements ModelProvider {
     // Agent loop: send → stream response → tool calls → repeat
     const MAX_RETRIES = 3;
     let continueLoop = true;
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+    let lastRoundInputTokens = 0;
     while (continueLoop) {
       continueLoop = false;
 
@@ -355,11 +358,22 @@ export class OpenAIProvider implements ModelProvider {
         continueLoop = true;
       }
 
+      // Accumulate token usage across rounds
+      if (result.usage) {
+        totalInputTokens += result.usage.input_tokens;
+        totalOutputTokens += result.usage.output_tokens;
+        lastRoundInputTokens = result.usage.input_tokens;
+      }
+
       if (!continueLoop) {
         yield {
           type: "done",
-          usage: result.usage
-            ? { inputTokens: result.usage.input_tokens, outputTokens: result.usage.output_tokens }
+          usage: totalInputTokens > 0 || totalOutputTokens > 0
+            ? {
+                inputTokens: totalInputTokens,
+                outputTokens: totalOutputTokens,
+                contextTokens: lastRoundInputTokens,
+              }
             : undefined,
         };
       }

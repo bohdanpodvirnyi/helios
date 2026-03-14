@@ -66,36 +66,35 @@ export function Layout({ runtime, mouseEmitter, headless, initialPrompt, initial
     if (!session) return [];
     const stored = orchestrator.sessionStore.getMessages(session.id, 500);
     const msgs: Message[] = [];
-    // Index of tool calls by callId for correlating tool results
+    // Index tool calls by callId for O(1) correlation with tool results
     const toolCallIndex = new Map<string, { name: string; args: Record<string, unknown> }>();
+    const toolMsgByCallId = new Map<string, Message>();
 
     for (const m of stored) {
       if (m.role === "assistant") {
         const tcs = parseToolCalls(m);
-        // Emit the text portion (if any)
         if (m.content) {
           msgs.push({ id: ++messageIdCounter, role: "assistant", content: m.content });
         }
-        // Emit each tool call as a separate tool message (matches live streaming behavior)
         for (const tc of tcs) {
           toolCallIndex.set(tc.id, { name: tc.name, args: tc.args });
-          msgs.push({
+          const toolMsg: Message = {
             id: ++messageIdCounter,
             role: "tool",
             content: "",
             tool: { callId: tc.id, name: tc.name, args: tc.args },
-          });
+          };
+          msgs.push(toolMsg);
+          toolMsgByCallId.set(tc.id, toolMsg);
         }
       } else if (m.role === "tool" && m.toolCalls) {
         const meta = parseToolResultMeta(m);
-        // Find the matching tool call to get the real name/args
-        const parent = toolCallIndex.get(meta.callId);
-        const existing = msgs.find((msg) => msg.tool?.callId === meta.callId);
+        const existing = toolMsgByCallId.get(meta.callId);
         if (existing?.tool) {
-          // Attach result to the existing tool message
           existing.tool.result = m.content;
           existing.tool.isError = meta.isError;
         } else {
+          const parent = toolCallIndex.get(meta.callId);
           msgs.push({
             id: ++messageIdCounter,
             role: "tool",
@@ -493,13 +492,12 @@ export function Layout({ runtime, mouseEmitter, headless, initialPrompt, initial
   }, [subagentManager]);
 
   // Queue wake events that arrive while streaming, replay when streaming ends
-  const pendingWakeRef = useRef<string | null>(null);
+  const pendingWakesRef = useRef<string[]>([]);
 
   useEffect(() => {
     const onWake = (_session: unknown, _reason: string, wakeMessage: string) => {
       if (isStreamingRef.current) {
-        // Don't drop — queue for replay after streaming completes
-        pendingWakeRef.current = wakeMessage;
+        pendingWakesRef.current.push(wakeMessage);
         return;
       }
       addMessageRef.current("system", "Agent waking up — trigger fired");
@@ -512,11 +510,11 @@ export function Layout({ runtime, mouseEmitter, headless, initialPrompt, initial
     };
   }, [sleepManager]);
 
-  // Replay queued wake event when streaming ends
+  // Replay queued wake events when streaming ends
   useEffect(() => {
-    if (!isStreaming && pendingWakeRef.current) {
-      const wakeMessage = pendingWakeRef.current;
-      pendingWakeRef.current = null;
+    if (!isStreaming && pendingWakesRef.current.length > 0) {
+      const wakeMessage = pendingWakesRef.current.shift()!;
+      pendingWakesRef.current = []; // discard any further queued — one wake is enough
       addMessageRef.current("system", "Agent waking up — trigger fired");
       handleSubmitRef.current(wakeMessage);
     }

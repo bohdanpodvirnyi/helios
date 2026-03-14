@@ -169,7 +169,7 @@ export class Orchestrator {
     this._activeSession = session;
 
     // Backfill title for sessions created before title generation was added
-    if (!this.sessionStore.getSessionTitle(session.id)) {
+    if (!stored.title) {
       const msgs = this.sessionStore.getMessages(session.id, 1);
       if (msgs.length > 0 && msgs[0].role === "user") {
         this.sessionStore.updateSessionTitle(session.id, truncate(msgs[0].content, 60, true));
@@ -276,9 +276,9 @@ export class Orchestrator {
             if (event.usage) {
               this.addCost(event.usage.costUsd ?? 0, event.usage.inputTokens, event.usage.outputTokens);
               lastOutputTokens = event.usage.outputTokens;
-            }
-            if (event.usage?.inputTokens) {
-              this._lastInputTokens = event.usage.inputTokens;
+              // Use contextTokens (actual context size) for checkpoint decisions,
+              // fall back to inputTokens for providers that don't report it separately
+              this._lastInputTokens = event.usage.contextTokens ?? event.usage.inputTokens;
             }
           }
 

@@ -28,13 +28,23 @@ export interface StoredMessage {
 /** Parse the tool_calls column for an assistant message (array of tool calls). */
 export function parseToolCalls(msg: StoredMessage): StoredToolCall[] {
   if (!msg.toolCalls) return [];
-  return JSON.parse(msg.toolCalls);
+  try {
+    const parsed = JSON.parse(msg.toolCalls);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }
 
 /** Parse the tool_calls column for a tool result message (call metadata). */
 export function parseToolResultMeta(msg: StoredMessage): StoredToolResultMeta {
   if (!msg.toolCalls) return { callId: "" };
-  return JSON.parse(msg.toolCalls);
+  try {
+    const parsed = JSON.parse(msg.toolCalls);
+    return parsed && typeof parsed.callId === "string" ? parsed : { callId: "" };
+  } catch {
+    return { callId: "" };
+  }
 }
 
 export interface SessionSummary {
@@ -107,6 +117,7 @@ export class SessionStore {
       providerSessionId: row.provider_session_id as string | undefined,
       createdAt: row.created_at as number,
       lastActiveAt: row.last_active_at as number,
+      title: (row.title as string | undefined) ?? undefined,
     };
   }
 

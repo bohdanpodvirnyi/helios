@@ -29,6 +29,9 @@ export class SubagentManager extends EventEmitter {
       throw new Error(`Subagent depth limit reached (max: ${this.maxDepth})`);
     }
 
+    // Auto-prune completed agents to prevent unbounded growth
+    this.prune();
+
     const resolved = resolveProviderForModel(config.model, config.provider, orchestrator);
     const id = nanoid(8);
 

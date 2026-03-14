@@ -619,7 +619,7 @@ describe("ClaudeProvider", () => {
       const events = await collect(provider.send(session, "hi", []));
       const doneEvent = events.find((e) => e.type === "done");
       expect(doneEvent).toBeDefined();
-      expect(doneEvent.usage).toEqual({ inputTokens: 10, outputTokens: 5 });
+      expect(doneEvent.usage).toEqual({ inputTokens: 10, outputTokens: 5, contextTokens: 10 });
     });
 
     it("send() yields tool_call events for tool_use blocks", async () => {

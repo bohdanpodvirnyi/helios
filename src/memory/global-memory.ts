@@ -127,19 +127,4 @@ export class GlobalMemoryRouter extends MemoryStore {
   override count(): number {
     return super.count() + this.global.count();
   }
-
-  override formatTree(dirPath = "/"): string {
-    const nodes = this.tree(dirPath);
-    if (nodes.length === 0) return "(empty)";
-
-    const lines: string[] = [];
-    for (const node of nodes) {
-      const parts = node.path.split("/").filter(Boolean);
-      const depth = parts.length - 1;
-      const indent = "  ".repeat(depth);
-      const name = parts[parts.length - 1] + (node.isDir ? "/" : "");
-      lines.push(`${indent}${name}: ${node.gist}`);
-    }
-    return lines.join("\n");
-  }
 }

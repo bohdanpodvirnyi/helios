@@ -47,6 +47,8 @@ export interface TokenUsage {
   inputTokens: number;
   outputTokens: number;
   costUsd?: number;
+  /** Current context window size (last round's input tokens). Used for checkpoint decisions. */
+  contextTokens?: number;
 }
 
 // --- Session ---
@@ -57,6 +59,7 @@ export interface Session {
   providerSessionId?: string;
   createdAt: number;
   lastActiveAt: number;
+  title?: string;
 }
 
 export interface SessionConfig {
