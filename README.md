@@ -1,11 +1,24 @@
 # Helios
 
+> **Fork of [snoglobe/helios](https://github.com/snoglobe/helios)** — generalized from ML-only experimentation to **any domain**: build optimization, performance benchmarking, infrastructure tuning, ML training, or any workflow that benefits from systematic trial-and-error.
+
 > [!CAUTION]
 > **Important:** Helios does not currently have a permissions/security model. The agent runs basically unrestricted. You are responsible for any losses of data/other adverse outcomes from running it. If you have stuff you care about, then back it up (whether or not you use Helios, backing up is a good idea!), configure Helios to SSH into a container, or wait until it has a permissions system.
 >
 > Claude mode will not work if you are running as root. It is recommended to instead run Helios on your local computer and set up your remote machine within Helios' SSH configuration. It will forward everything to your remote machine, no server required.
 
-An autonomous experiment agent inspired by [Andrej Karpathy's 'autoresearch'](https://github.com/karpathy/autoresearch). Give it a goal — it designs experiments, runs them, measures results, and iterates until the goal is met. Works across any domain: build optimization, performance benchmarking, ML training, infrastructure tuning, or any workflow that benefits from systematic trial-and-error.
+An autonomous experiment agent inspired by [Andrej Karpathy's 'autoresearch'](https://github.com/karpathy/autoresearch). Give it a goal — it designs experiments, runs them, measures results, and iterates until the goal is met.
+
+### What changed from upstream
+
+The original Helios is purpose-built for ML training loops (loss/accuracy tracking, GPU monitoring, paper reading, hyperparameter sweeps). This fork generalizes the same powerful autonomous loop pattern to work across **any experimentation domain**:
+
+- **System prompt** — domain-agnostic; no ML assumptions
+- **env_snapshot** — detects Node, Python, Swift, Go, Rust, Java, Xcode (not just Python/GPU/CUDA)
+- **Bundled skills** — generalized discover, ablation, writeup, consult
+- **Tool descriptions** — generic examples (build flags, config params) instead of ML-specific (learning rate, batch size)
+- **doctor** — reports all available toolchains
+- **init** — no default ML metrics; you configure what matters for your domain
 
 It can operate seamlessly over SSH (even multiple machines), keeps the model in a loop, has tools to view/compare metrics, shows metrics directly in the UI, and has a memory system.
 
