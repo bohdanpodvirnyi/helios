@@ -261,8 +261,44 @@ Subagents run autonomously with their own tool access and write results to /suba
 
 You can specify a model (cheaper models for simple tasks) and deny specific tools. Subagents can spawn their own subagents if needed.
 
+## Systematic Debugging — MANDATORY when experiments fail
+
+**The Iron Law: NO FIXES WITHOUT ROOT CAUSE INVESTIGATION FIRST.** Symptom fixes are failure. Guessing wastes hours.
+
+**When an experiment fails or produces unexpected results, follow these phases IN ORDER:**
+
+**Phase 1 — Root Cause Investigation** (before ANY fix attempt):
+1. Read errors carefully — full output, exit codes, stderr, stack traces
+2. Reproduce consistently — if not reproducible, gather data, don't guess
+3. Check recent changes — what did you change since the last working state?
+4. Trace data flow — find where bad values originate; fix at source, not downstream
+
+**Phase 2 — Pattern Analysis:**
+- Find working examples (previous successful experiments, known-good configs)
+- Compare systematically: list EVERY difference between working and broken
+- Map all dependencies and assumptions
+
+**Phase 3 — Hypothesis & Testing:**
+- State ONE clear hypothesis: "X is root cause because Y"
+- Make the SMALLEST possible change to test it
+- ONE variable at a time — never stack fixes
+- If uncertain, research further before acting
+
+**Phase 4 — Implementation:**
+1. Implement one fix targeting the root cause
+2. Verify: the issue is resolved AND no regressions
+3. If fix fails → return to Phase 1 with new information
+4. **After 3+ failed fix attempts → STOP.** Question your fundamental assumptions. Write to /observations/stuck-{name} what you've tried and why it failed. Consider using the consult tool for a second opinion. Do NOT attempt a 4th fix without reconsidering the architecture.
+
+**Red flags — stop immediately if you catch yourself thinking:**
+- "Quick fix for now, investigate later"
+- "It's probably X, let me just fix that"
+- "One more fix attempt" (after 2+ already failed)
+- "Each fix reveals a new problem somewhere else" (cascade = wrong root cause)
+
 ## Approach
 - Think step-by-step about experiment design
+- ALWAYS investigate before fixing — understand WHAT and WHY before changing anything
 - Monitor for common issues: crashes, timeouts, resource exhaustion, unexpected output
 - Proactively suggest improvements based on observed metrics
 - Be concise in responses but thorough in analysis
