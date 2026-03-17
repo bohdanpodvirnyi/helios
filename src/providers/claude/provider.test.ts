@@ -284,9 +284,11 @@ describe("ClaudeProvider", () => {
 
     it("fetchModels returns Claude models", async () => {
       const models = await provider.fetchModels();
-      expect(models).toHaveLength(2);
-      expect(models[0].id).toBe("claude-opus-4-6");
-      expect(models[1].id).toBe("claude-sonnet-4-6");
+      expect(models).toHaveLength(4);
+      expect(models.map(m => m.id)).toContain("claude-opus-4-6[1m]");
+      expect(models.map(m => m.id)).toContain("claude-opus-4-6");
+      expect(models.map(m => m.id)).toContain("claude-sonnet-4-6[1m]");
+      expect(models.map(m => m.id)).toContain("claude-sonnet-4-6");
     });
   });
 

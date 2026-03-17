@@ -258,9 +258,11 @@ Config is auto-discovered by walking up the directory tree. The `instructions` f
 
 ## Models
 
-**Claude** (200k context):
-- `claude-opus-4-6` — higher-end reasoning/coding (default)
-- `claude-sonnet-4-6` — balanced speed vs reasoning
+**Claude**:
+- `claude-opus-4-6[1m]` — higher-end reasoning/coding, 1M context
+- `claude-opus-4-6` — higher-end reasoning/coding, 200k context (default)
+- `claude-sonnet-4-6[1m]` — balanced speed vs reasoning, 1M context
+- `claude-sonnet-4-6` — balanced speed vs reasoning, 200k context
 
 **OpenAI** (~400k context):
 - `gpt-5.4` — latest flagship, recommended (default)

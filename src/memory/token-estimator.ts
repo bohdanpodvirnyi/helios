@@ -5,6 +5,9 @@ export function estimateTokens(text: string): number {
 
 /** Per-model context window sizes. */
 const MODEL_LIMITS: Record<string, number> = {
+  // Claude (1M context)
+  "claude-opus-4-6[1m]": 1_000_000,
+  "claude-sonnet-4-6[1m]": 1_000_000,
   // Claude (200k)
   "claude-opus-4-6": 200_000,
   "claude-sonnet-4-6": 200_000,

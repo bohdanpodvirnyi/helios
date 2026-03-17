@@ -932,10 +932,12 @@ describe("ClaudeProvider — History Deep Edge Cases", () => {
       expect(userContent.filter((b: any) => b.type === "text")).toHaveLength(1);
     });
 
-    it("fetchModels returns two Claude models", async () => {
+    it("fetchModels returns Claude models including 1M variants", async () => {
       const models = await provider.fetchModels();
-      expect(models).toHaveLength(2);
+      expect(models).toHaveLength(4);
+      expect(models.map((m: any) => m.id)).toContain("claude-opus-4-6[1m]");
       expect(models.map((m: any) => m.id)).toContain("claude-opus-4-6");
+      expect(models.map((m: any) => m.id)).toContain("claude-sonnet-4-6[1m]");
       expect(models.map((m: any) => m.id)).toContain("claude-sonnet-4-6");
     });
 

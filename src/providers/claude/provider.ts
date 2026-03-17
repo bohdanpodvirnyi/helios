@@ -308,8 +308,10 @@ export class ClaudeProvider implements ModelProvider {
 
   async fetchModels(): Promise<ModelInfo[]> {
     return [
-      { id: "claude-opus-4-6", name: "Claude Opus 4.6", description: "Higher-end reasoning/coding (200k)" },
-      { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", description: "Balanced speed vs reasoning (200k)" },
+      { id: "claude-opus-4-6[1m]", name: "Claude Opus 4.6 (1M)", description: "Higher-end reasoning/coding — 1M context" },
+      { id: "claude-opus-4-6", name: "Claude Opus 4.6", description: "Higher-end reasoning/coding — 200k context" },
+      { id: "claude-sonnet-4-6[1m]", name: "Claude Sonnet 4.6 (1M)", description: "Balanced speed vs reasoning — 1M context" },
+      { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", description: "Balanced speed vs reasoning — 200k context" },
     ];
   }
 
