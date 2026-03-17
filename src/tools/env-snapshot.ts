@@ -7,16 +7,16 @@ interface Snapshot {
   name: string;
   machineId: string;
   capturedAt: string;
-  python: string | null;
-  pipPackages: string[] | null;
-  gpu: string | null;
-  cudaVersion: string | null;
   os: string | null;
   cpu: string | null;
   memory: string | null;
+  disk: string | null;
+  gpu: string | null;
+  cudaVersion: string | null;
+  toolchains: Record<string, string>;
   gitHash: string | null;
   gitDiff: string | null;
-  disk: string | null;
+  packages: string[] | null;
 }
 
 export function createEnvSnapshotTool(
@@ -26,7 +26,7 @@ export function createEnvSnapshotTool(
   return {
     name: "env_snapshot",
     description:
-      "Capture a full environment snapshot on a machine for reproducibility. Records Python version, pip packages, GPU info, CUDA version, OS, git hash, and system specs. Stores the snapshot in memory at /snapshots/<name>.",
+      "Capture a full environment snapshot on a machine for reproducibility. Records OS, CPU, memory, disk, GPU, available toolchains (languages, compilers, runtimes), git hash, and installed packages. Stores the snapshot in memory at /snapshots/<name>.",
     parameters: {
       type: "object",
       properties: {
@@ -46,7 +46,7 @@ export function createEnvSnapshotTool(
         venv_path: {
           type: "string",
           description:
-            "Path to venv/conda env for pip freeze (uses system Python if omitted)",
+            "Path to Python venv/conda env for pip freeze (optional, for Python projects)",
         },
       },
       required: ["machine_id", "name"],
@@ -68,11 +68,6 @@ export function createEnvSnapshotTool(
           }
         };
 
-        // Build pip freeze command
-        const pipCmd = venvPath
-          ? `${shellQuote(venvPath)}/bin/pip freeze 2>/dev/null`
-          : `pip3 freeze 2>/dev/null || pip freeze 2>/dev/null`;
-
         // Build CPU info command — try macOS sysctl first, fall back to Linux lscpu
         const cpuCmd = `sysctl -n machdep.cpu.brand_string 2>/dev/null || lscpu 2>/dev/null | head -20`;
 
@@ -81,31 +76,73 @@ export function createEnvSnapshotTool(
           ? `cd ${shellQuote(repoPath)} && git rev-parse HEAD 2>/dev/null && git diff --stat 2>/dev/null`
           : null;
 
-        // Run all commands in parallel
+        // Build pip freeze command (optional, for Python projects)
+        const pipCmd = venvPath
+          ? `${shellQuote(venvPath)}/bin/pip freeze 2>/dev/null`
+          : `pip3 freeze 2>/dev/null || pip freeze 2>/dev/null`;
+
+        // Run all commands in parallel — system info + toolchain detection
         const [
-          pythonOut,
-          pipOut,
-          gpuOut,
-          cudaOut,
           osOut,
           cpuOut,
           memOut,
-          gitOut,
           diskOut,
+          gpuOut,
+          cudaOut,
+          nodeOut,
+          pythonOut,
+          swiftOut,
+          goOut,
+          rustOut,
+          javaOut,
+          xcodeOut,
+          pipOut,
+          gitOut,
         ] = await Promise.all([
-          safeExec(`python3 --version 2>/dev/null || python --version 2>/dev/null`),
-          safeExec(pipCmd),
-          safeExec(`nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader 2>/dev/null`),
-          safeExec(`nvcc --version 2>/dev/null`),
           safeExec(`uname -a`),
           safeExec(cpuCmd),
           safeExec(`free -h 2>/dev/null || vm_stat 2>/dev/null`),
-          gitCmd ? safeExec(gitCmd) : Promise.resolve(null),
           safeExec(`df -h / 2>/dev/null`),
+          safeExec(`nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader 2>/dev/null`),
+          safeExec(`nvcc --version 2>/dev/null`),
+          safeExec(`node --version 2>/dev/null`),
+          safeExec(`python3 --version 2>/dev/null || python --version 2>/dev/null`),
+          safeExec(`swift --version 2>/dev/null | head -1`),
+          safeExec(`go version 2>/dev/null`),
+          safeExec(`rustc --version 2>/dev/null`),
+          safeExec(`java --version 2>/dev/null | head -1`),
+          safeExec(`xcodebuild -version 2>/dev/null | head -1`),
+          safeExec(pipCmd),
+          gitCmd ? safeExec(gitCmd) : Promise.resolve(null),
         ]);
 
-        // Parse pip packages
-        const pipPackages = pipOut
+        // Build toolchains map
+        const toolchains: Record<string, string> = {};
+        if (nodeOut) toolchains.node = nodeOut.replace(/^v/, "");
+        if (pythonOut) toolchains.python = pythonOut.replace(/^Python\s+/i, "");
+        if (swiftOut) {
+          const m = swiftOut.match(/Swift version\s+([\d.]+)/i);
+          toolchains.swift = m ? m[1] : swiftOut;
+        }
+        if (goOut) {
+          const m = goOut.match(/go([\d.]+)/);
+          toolchains.go = m ? m[1] : goOut;
+        }
+        if (rustOut) {
+          const m = rustOut.match(/rustc\s+([\d.]+)/);
+          toolchains.rust = m ? m[1] : rustOut;
+        }
+        if (javaOut) {
+          const m = javaOut.match(/([\d.]+)/);
+          toolchains.java = m ? m[1] : javaOut;
+        }
+        if (xcodeOut) {
+          const m = xcodeOut.match(/Xcode\s+([\d.]+)/);
+          toolchains.xcode = m ? m[1] : xcodeOut;
+        }
+
+        // Parse packages (pip for Python projects)
+        const packages = pipOut
           ? pipOut.split("\n").filter((l) => l.includes("==") || l.includes("@"))
           : null;
 
@@ -132,32 +169,30 @@ export function createEnvSnapshotTool(
           name,
           machineId,
           capturedAt: new Date().toISOString(),
-          python: pythonOut,
-          pipPackages,
-          gpu: gpuOut ?? "no GPU",
-          cudaVersion,
           os: osOut,
           cpu: cpuOut,
           memory: memOut,
+          disk: diskOut,
+          gpu: gpuOut ?? "no GPU",
+          cudaVersion,
+          toolchains,
           gitHash,
           gitDiff,
-          disk: diskOut,
+          packages,
         };
 
         // Format as readable text block
         const content = formatSnapshot(snapshot);
 
         // Build one-line gist summary
-        const pythonVer = snapshot.python?.replace("Python ", "") ?? "unknown";
-        const cudaStr = snapshot.cudaVersion ? `CUDA ${snapshot.cudaVersion}` : "no CUDA";
+        const tcNames = Object.entries(snapshot.toolchains)
+          .map(([k, v]) => `${k} ${v}`)
+          .join(", ");
         const gpuStr =
           snapshot.gpu && snapshot.gpu !== "no GPU"
             ? snapshot.gpu.split(",")[0]?.trim()
             : "no GPU";
-        const pipCount = snapshot.pipPackages
-          ? `${snapshot.pipPackages.length} pip pkgs`
-          : "pip unavailable";
-        const gist = `${machineId}: Python ${pythonVer}, ${cudaStr}, ${gpuStr}, ${pipCount}`;
+        const gist = `${machineId}: ${tcNames || "no toolchains"}, ${gpuStr}`;
 
         // Store in memory
         const memoryPath = `/snapshots/${name}`;
@@ -185,15 +220,6 @@ function formatSnapshot(s: Snapshot): string {
     `Machine: ${s.machineId}`,
     `Captured: ${s.capturedAt}`,
     "",
-    `## Python`,
-    s.python ?? "unavailable",
-    "",
-    `## GPU`,
-    s.gpu ?? "no GPU",
-    "",
-    `## CUDA`,
-    s.cudaVersion ?? "unavailable",
-    "",
     `## OS`,
     s.os ?? "unavailable",
     "",
@@ -205,7 +231,25 @@ function formatSnapshot(s: Snapshot): string {
     "",
     `## Disk`,
     s.disk ?? "unavailable",
+    "",
+    `## GPU`,
+    s.gpu ?? "no GPU",
   ];
+
+  if (s.cudaVersion) {
+    lines.push("", `## CUDA`, s.cudaVersion);
+  }
+
+  // Toolchains
+  const tcEntries = Object.entries(s.toolchains);
+  if (tcEntries.length > 0) {
+    lines.push("", `## Toolchains`);
+    for (const [name, version] of tcEntries) {
+      lines.push(`${name}: ${version}`);
+    }
+  } else {
+    lines.push("", `## Toolchains`, "none detected");
+  }
 
   if (s.gitHash) {
     lines.push("", `## Git`, `Commit: ${s.gitHash}`);
@@ -214,10 +258,8 @@ function formatSnapshot(s: Snapshot): string {
     }
   }
 
-  if (s.pipPackages && s.pipPackages.length > 0) {
-    lines.push("", `## Pip Packages (${s.pipPackages.length})`, ...s.pipPackages);
-  } else {
-    lines.push("", `## Pip Packages`, "unavailable");
+  if (s.packages && s.packages.length > 0) {
+    lines.push("", `## Packages (${s.packages.length})`, ...s.packages);
   }
 
   return lines.join("\n");

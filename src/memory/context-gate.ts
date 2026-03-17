@@ -103,7 +103,7 @@ export class ContextGate {
 
     const parts = [
       "=== CONTEXT CHECKPOINT ===",
-      "You are Helios, continuing an autonomous ML research session.",
+      "You are Helios, continuing an autonomous experiment session.",
       "Your previous conversation has been archived.",
     ];
 

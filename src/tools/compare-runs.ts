@@ -8,9 +8,9 @@ export function createCompareRunsTool(
   return {
     name: "compare_runs",
     description:
-      "Compare metrics between two experiment runs side-by-side. " +
+      "Compare metrics between two runs side-by-side. " +
       "Shows the final value, min, max, and delta for each metric. " +
-      "Use this to decide whether to keep or discard an experiment.",
+      "Use this to decide whether to keep or discard a change.",
     parameters: {
       type: "object",
       properties: {

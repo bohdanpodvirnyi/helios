@@ -278,7 +278,7 @@ export class AcpServer {
       },
       agentInfo: {
         name: "helios",
-        title: "Helios — Autonomous ML Research Agent",
+        title: "Helios — Autonomous Experiment Agent",
         version: VERSION,
       },
       authMethods: [],

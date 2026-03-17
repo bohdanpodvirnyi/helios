@@ -9,7 +9,7 @@ export function createRemoteExecTool(
   return {
     name: "remote_exec",
     description:
-      "Execute a short shell command. Returns stdout, stderr, and exit code. ONLY for quick one-shot commands (ls, cat, pip install, git clone, etc). NEVER use this for training, evaluation, or anything that runs longer than a few seconds — use remote_exec_background instead.",
+      "Execute a short shell command. Returns stdout, stderr, and exit code. ONLY for quick one-shot commands (ls, cat, install, git clone, etc). NEVER use this for builds, benchmarks, tests, or anything that runs longer than a few seconds — use remote_exec_background instead.",
     parameters: {
       type: "object",
       properties: {
@@ -72,13 +72,13 @@ export function createRemoteExecBackgroundTool(
           type: "array",
           items: { type: "string" },
           description:
-            "Metric names to parse from stdout in key=value or key: value format. Example: [\"loss\", \"acc\", \"lr\"]",
+            "Metric names to parse from stdout in key=value or key: value format. Example: [\"duration\", \"throughput\", \"errors\"]",
         },
         metric_patterns: {
           type: "object",
           additionalProperties: { type: "string" },
           description:
-            "Map of metric name → regex string with one capture group for the numeric value. Example: {\"loss\": \"Loss:\\\\s*([\\\\d.e+-]+)\"}",
+            "Map of metric name → regex string with one capture group for the numeric value. Example: {\"build_time\": \"completed in ([\\\\d.]+)s\"}",
         },
       },
       required: ["machine_id", "command"],

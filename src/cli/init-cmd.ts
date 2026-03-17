@@ -46,8 +46,7 @@ export const initCmd = Command.make(
       if (Option.isSome(model)) config.model = model.value;
       if (Option.isSome(machine)) config.defaultMachine = machine.value;
 
-      // Sensible defaults
-      config.metricNames = ["loss", "acc", "lr"];
+      // No default metric names — the user should configure these for their domain
 
       writeProjectConfig(dir, config);
       console.log(`Created helios.json in ${dir}`);

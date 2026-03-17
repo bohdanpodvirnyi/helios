@@ -159,14 +159,18 @@ async function checkMachineDetails(pool: { exec(id: string, cmd: string): Promis
         () => false,
       );
 
-  // Run GPU, Python, CUDA checks in parallel
+  // Detect available toolchains in parallel
   const gpuCmd = isMac
     ? "system_profiler SPDisplaysDataType 2>/dev/null"
     : "nvidia-smi --query-gpu=name,memory.total,utilization.gpu,temperature.gpu --format=csv,noheader,nounits 2>/dev/null";
 
-  const [gpuResult, pyResult, cudaResult] = await Promise.all([
+  const [gpuResult, nodeResult, pyResult, swiftResult, goResult, rustResult, cudaResult] = await Promise.all([
     pool.exec(id, gpuCmd).catch(() => null),
+    pool.exec(id, "node --version 2>/dev/null").catch(() => null),
     pool.exec(id, "python3 --version 2>/dev/null || python --version 2>/dev/null").catch(() => null),
+    pool.exec(id, "swift --version 2>/dev/null | head -1").catch(() => null),
+    pool.exec(id, "go version 2>/dev/null").catch(() => null),
+    pool.exec(id, "rustc --version 2>/dev/null").catch(() => null),
     isMac ? null : pool.exec(id, "nvcc --version 2>/dev/null | grep -i release").catch(() => null),
   ]);
 
@@ -183,12 +187,32 @@ async function checkMachineDetails(pool: { exec(id: string, cmd: string): Promis
     detail("GPU: none detected");
   }
 
-  // Python version
+  // Toolchains — show what's available
+  const toolchains: string[] = [];
+
+  if (nodeResult && nodeResult.exitCode === 0 && nodeResult.stdout.trim()) {
+    toolchains.push(`Node ${nodeResult.stdout.trim()}`);
+  }
   if (pyResult && pyResult.exitCode === 0 && pyResult.stdout.trim()) {
-    const ver = pyResult.stdout.trim().replace(/^Python\s+/i, "");
-    detail(`Python: ${ver}`);
+    toolchains.push(pyResult.stdout.trim());
+  }
+  if (swiftResult && swiftResult.exitCode === 0 && swiftResult.stdout.trim()) {
+    const ver = swiftResult.stdout.trim().match(/Swift version\s+([\d.]+)/i);
+    toolchains.push(ver ? `Swift ${ver[1]}` : "Swift");
+  }
+  if (goResult && goResult.exitCode === 0 && goResult.stdout.trim()) {
+    const ver = goResult.stdout.trim().match(/go([\d.]+)/);
+    toolchains.push(ver ? `Go ${ver[1]}` : "Go");
+  }
+  if (rustResult && rustResult.exitCode === 0 && rustResult.stdout.trim()) {
+    const ver = rustResult.stdout.trim().match(/rustc\s+([\d.]+)/);
+    toolchains.push(ver ? `Rust ${ver[1]}` : "Rust");
+  }
+
+  if (toolchains.length > 0) {
+    detail(`Toolchains: ${toolchains.join(", ")}`);
   } else {
-    detail("Python: not found");
+    detail("Toolchains: none detected");
   }
 
   // CUDA version (only relevant for NVIDIA machines)

@@ -57,7 +57,7 @@ export const discover = Command.make(
         skill.config.provider = providerChoice;
       }
 
-      const interestsText = Option.getOrUndefined(interestsOpt) ?? "general ML research";
+      const interestsText = Option.getOrUndefined(interestsOpt) ?? "general research";
 
       process.stderr.write(`Starting background discovery on: ${interestsText}\n`);
       process.stderr.write(`Delay between iterations: ${Math.round((skill.config.delay_ms ?? 60_000) / 1000)}s\n`);

@@ -52,14 +52,14 @@ export function createSweepTool(
   return {
     name: "sweep",
     description:
-      "Launch a hyperparameter sweep. Defines a parameter grid and runs experiments in parallel across available machines. Each combination gets its own background process with metric tracking.",
+      "Launch a parameter sweep. Defines a parameter grid and runs experiments in parallel across available machines. Each combination gets its own background process with metric tracking.",
     parameters: {
       type: "object",
       properties: {
         command_template: {
           type: "string",
           description:
-            'Command template with {param_name} placeholders. Example: "python train.py --lr {lr} --batch-size {bs}"',
+            'Command template with {param_name} placeholders. Example: "make build JOBS={jobs} OPT_LEVEL={opt}"',
         },
         params: {
           type: "object",
@@ -68,7 +68,7 @@ export function createSweepTool(
             items: { type: "string" },
           },
           description:
-            'Parameter grid. Keys are param names, values are arrays of values. Example: {"lr": [0.001, 0.0001], "bs": [32, 64]}',
+            'Parameter grid. Keys are param names, values are arrays of values. Example: {"jobs": [4, 8, 16], "opt": ["O1", "O2", "O3"]}',
         },
         machines: {
           type: "array",
@@ -80,7 +80,7 @@ export function createSweepTool(
           type: "array",
           items: { type: "string" },
           description:
-            'Metrics to track for each run in key=value format. Example: ["loss", "acc"]',
+            'Metrics to track for each run in key=value format. Example: ["duration", "throughput"]',
         },
         metric_patterns: {
           type: "object",

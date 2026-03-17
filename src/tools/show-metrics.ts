@@ -8,7 +8,7 @@ export function createShowMetricsTool(
   return {
     name: "show_metrics",
     description:
-      "Query and display metrics. Shows sparkline charts, current values, and trend analysis. Use this to check on training progress, report results to the user, or compare values. Omit metric_names to list all available metrics.",
+      "Query and display metrics. Shows sparkline charts, current values, and trend analysis. Use this to check on experiment progress, report results to the user, or compare values. Omit metric_names to list all available metrics.",
     parameters: {
       type: "object",
       properties: {

@@ -2,16 +2,25 @@
 
 > [!CAUTION]
 > **Important:** Helios does not currently have a permissions/security model. The agent runs basically unrestricted. You are responsible for any losses of data/other adverse outcomes from running it. If you have stuff you care about, then back it up (whether or not you use Helios, backing up is a good idea!), configure Helios to SSH into a container, or wait until it has a permissions system.
-> 
+>
 > Claude mode will not work if you are running as root. It is recommended to instead run Helios on your local computer and set up your remote machine within Helios' SSH configuration. It will forward everything to your remote machine, no server required.
 
-![Helios screenshot](https://raw.githubusercontent.com/snoglobe/helios/main/media/screnshot.png)
-
-An autonomous research agent inspired by [Andrej Karpathy's 'autoresearch'](https://github.com/karpathy/autoresearch). Autoresearch works very well within Helios, just have to tune the prompt slightly.
+An autonomous experiment agent inspired by [Andrej Karpathy's 'autoresearch'](https://github.com/karpathy/autoresearch). Give it a goal — it designs experiments, runs them, measures results, and iterates until the goal is met. Works across any domain: build optimization, performance benchmarking, ML training, infrastructure tuning, or any workflow that benefits from systematic trial-and-error.
 
 It can operate seamlessly over SSH (even multiple machines), keeps the model in a loop, has tools to view/compare metrics, shows metrics directly in the UI, and has a memory system.
 
 You can leave it to work overnight and don't have to worry about it exiting the loop early to stupidly ask you something or because it has to wait for something. And hopefully you'll wake up to results.
+
+## Example Goals
+
+```
+> Reduce iOS app build time below 60 seconds
+> Optimize Postgres query performance for the dashboard endpoint
+> Find the best compiler flags for minimal binary size
+> Train a 125M parameter GPT on TinyStories to loss < 1.0
+> Benchmark and optimize nginx config for max requests/sec
+> Find the fastest Docker build configuration for this project
+```
 
 ## Install
 
@@ -51,10 +60,10 @@ Options:
 Type a goal and Helios takes over:
 
 ```
-> Train a 125M parameter GPT on TinyStories to loss < 1.0
+> Reduce build time for this Xcode project below 60 seconds
 ```
 
-It will write training scripts, launch runs, parse metrics from stdout, set up monitoring intervals, compare experiments, and keep iterating until the goal is met or you interrupt.
+It will analyze the build, identify bottlenecks, try different configurations, measure results, compare experiments, and keep iterating until the goal is met or you interrupt.
 
 ### CLI Subcommands
 
@@ -65,7 +74,7 @@ It will write training scripts, launch runs, parse metrics from stdout, set up m
 | `helios watch <machine:pid>` | Stream task output + metrics live |
 | `helios replay <session-id>` | Replay a past session |
 | `helios report [session-id]` | Generate experiment writeup |
-| `helios discover [interests]` | Background literature discovery (runs until Ctrl+C) |
+| `helios discover [interests]` | Background research discovery (runs until Ctrl+C) |
 | `helios init` | Initialize project config (`helios.json`) |
 | `helios doctor` | Diagnose setup (auth, machines, storage, config) |
 | `helios search "query"` | Full-text search across session histories |
@@ -121,11 +130,11 @@ Mouse scroll works in terminals that support SGR mouse reporting.
 Helios can run workloads on remote machines over SSH. The `local` machine is always available.
 
 ```bash
-# Add a GPU box
-/machine add gpu1 researcher@10.0.0.5 --key ~/.ssh/id_rsa
+# Add a build server
+/machine add build1 dev@10.0.0.5 --key ~/.ssh/id_rsa
 
 # Add with custom port
-/machine add gpu2 user@hostname:2222
+/machine add server2 user@hostname:2222
 ```
 
 Machines are stored in `~/.helios/machines.json` and auto-connect on startup.
@@ -134,7 +143,7 @@ The agent prefers remote machines for heavy compute and uses `local` for lightwe
 
 ## How It Works
 
-Helios runs an autonomous loop:
+Helios runs an autonomous experiment loop:
 
 1. **Understand the goal** — break it into experiments
 2. **Launch** via `remote_exec_background` — stdout is captured, metrics are parsed live
@@ -145,14 +154,14 @@ Helios runs an autonomous loop:
 
 ### Metric Tracking
 
-Training scripts print metrics to stdout. Helios parses them automatically:
+Processes print metrics to stdout. Helios parses them automatically:
 
-```python
+```bash
 # key=value format (detected via metric_names)
-print(f"loss={loss:.4f} acc={acc:.4f} lr={lr:.6f}")
+echo "build_time=42.3 binary_size=12.5 warnings=3"
 
 # Custom patterns (detected via metric_patterns)
-print(f"Step {step}: Loss {loss:.4f}")
+echo "Build completed in 42.3s"
 ```
 
 Live sparklines appear in the dashboard. The agent uses `show_metrics` and `compare_runs` to make decisions.
@@ -162,13 +171,13 @@ Live sparklines appear in the dashboard. The agent uses `show_metrics` and `comp
 Long sessions get checkpointed when the context window fills up. The agent's memory persists as a virtual filesystem:
 
 ```
-/goal                    -> "Train TinyStories to loss < 1.0"
-/best                    -> "Run #3: lr=3e-4, cosine -> loss=0.83"
+/goal                    -> "Reduce Xcode build time below 60s"
+/best                    -> "Run #3: parallel jobs=8, whole-module opt -> 58.2s"
 /experiments/
   4521                   -> config, metrics, verdict
   4380                   -> config, metrics, verdict
 /observations/
-  cosine-schedule-helps  -> "cosine decay outperforms linear by ~15%"
+  parallel-helps         -> "8 parallel jobs reduces build by ~30% vs default"
 ```
 
 After a checkpoint, the agent receives its memory tree and continues where it left off.
@@ -179,8 +188,8 @@ Skills are reusable prompt templates with tool access controls. Helios ships wit
 
 | Skill | Description |
 |---|---|
-| `discover` | Background literature discovery — loops continuously, browses papers, stores findings in memory |
-| `paper <url>` | Read a paper and plan reproduction of key results |
+| `discover` | Background research discovery — loops continuously, browses resources, stores findings in memory |
+| `paper <url>` | Read a document and extract actionable insights for experiments |
 | `ablation` | Systematic ablation study on the current best configuration |
 | `writeup` | Generate a structured experiment writeup |
 | `consult` | Ask the other AI provider for a second opinion |
@@ -193,7 +202,7 @@ The agent can ask the other provider for a second opinion:
 
 ```
 # If running on Claude, consult asks OpenAI (and vice versa)
-consult("I'm stuck at loss=0.9 — what should I try next?")
+consult("I'm stuck at 65s build time — what should I try next?")
 ```
 
 ### Sleep & Wake
@@ -201,9 +210,9 @@ consult("I'm stuck at loss=0.9 — what should I try next?")
 The agent can put itself to sleep with composable triggers:
 
 ```
-sleep(reason: "waiting for training to finish", triggers: [
-  { type: "process_exit", machine_id: "gpu1", pid: 4521 },
-  { type: "metric", metric_name: "loss", threshold: 1.0, direction: "below" },
+sleep(reason: "waiting for build to finish", triggers: [
+  { type: "process_exit", machine_id: "local", pid: 4521 },
+  { type: "metric", metric_name: "build_time", threshold: 60, direction: "below" },
   { type: "timer", minutes: 120 }
 ])
 ```
@@ -218,12 +227,12 @@ Run `helios init` to create a `helios.json` in your project root:
 {
   "provider": "claude",
   "model": "claude-opus-4-6",
-  "defaultMachine": "gpu1",
-  "metricNames": ["loss", "acc", "lr"],
+  "defaultMachine": "local",
+  "metricNames": ["build_time", "binary_size", "warnings"],
   "metricPatterns": {
-    "loss": "Loss:\\s+([\\d.]+)"
+    "build_time": "Build completed in ([\\d.]+)s"
   },
-  "instructions": "This project uses PyTorch Lightning. Always use pl.Trainer.",
+  "instructions": "This project uses Xcode with SPM. Focus on Swift compilation flags and module boundaries.",
   "experimentDir": "experiments",
   "notifications": {
     "channels": [{ "type": "desktop" }],
@@ -256,7 +265,7 @@ The agent has access to 37 tools (33 core + 4 conditional AgentHub tools):
 
 | Tool | What it does |
 |---|---|
-| `remote_exec` | Run a quick command (ls, pip install, git clone) |
+| `remote_exec` | Run a quick command (ls, install, git clone) |
 | `remote_exec_background` | Launch a long-running process with metric tracking |
 | `remote_upload` / `remote_download` | rsync files between machines |
 | `read_file` / `write_file` / `patch_file` | File operations on any machine |
@@ -269,8 +278,8 @@ The agent has access to 37 tools (33 core + 4 conditional AgentHub tools):
 | `start_monitor` / `stop_monitor` | Periodic monitoring loop |
 | `memory_ls` / `memory_read` / `memory_write` / `memory_rm` | Persistent memory filesystem |
 | `web_search` | Search the web (maps to provider's native search) |
-| `web_fetch` | Fetch web pages, docs, papers |
-| `env_snapshot` | Capture full environment snapshot (Python, GPU, CUDA, etc.) |
+| `web_fetch` | Fetch web pages and documentation |
+| `env_snapshot` | Capture full environment snapshot (OS, toolchains, GPU, packages) |
 | `sweep` | Launch parameter grid search across machines |
 | `exp_branch` / `exp_commit` / `exp_diff` / `exp_branches` / `exp_checkout` | Git-based experiment branching |
 | `consult` | Ask the other AI provider |
